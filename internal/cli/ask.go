@@ -28,7 +28,8 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			resp, err := askWithFollowUp(ctx, s, "ask", input, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			s.SetInput(NewBufioReader(cmd.InOrStdin()))
+			resp, err := askWithFollowUp(ctx, s, "ask", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}

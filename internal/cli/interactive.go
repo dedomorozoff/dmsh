@@ -38,5 +38,8 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 		ctx = context.Background()
 	}
 
+	if isTerminal(in) {
+		return replLoopReadline(ctx, s, rf, out, errOut)
+	}
 	return replLoop(ctx, s, rf, in, out, errOut)
 }

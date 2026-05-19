@@ -117,6 +117,8 @@ func replLoop(ctx context.Context, s *session, rf *rootFlags, in io.Reader, out,
 
 	isTTY := isTerminal(in)
 
+	s.SetInput(NewBufioReader(in))
+
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
@@ -150,7 +152,7 @@ func replLoop(ctx context.Context, s *session, rf *rootFlags, in io.Reader, out,
 			continue
 		}
 
-		if err := handleTurn(ctx, s, rf, line, in, out, errW); err != nil {
+		if err := handleTurn(ctx, s, rf, line, out, errW); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
@@ -265,6 +267,8 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 	}
 	defer rl.Close()
 
+	s.SetInput(NewReadlineReader(rl))
+
 	for {
 		cwd, _ := os.Getwd()
 		rl.SetPrompt(buildPrompt(usr.Username, hostname, cwd, string(s.cfg.Mode), true) + " ")
@@ -298,9 +302,12 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 			continue
 		}
 
-		if err := handleTurn(ctx, s, rf, line, os.Stdin, out, errW); err != nil {
+		if err := handleTurn(ctx, s, rf, line, out, errW); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
+			}
+			if errors.Is(err, ErrInterrupted) {
+				continue
 			}
 			fmt.Fprintf(errW, "%s%s%s\n", red, err, reset)
 		}
@@ -428,7 +435,7 @@ func clearScreen(out io.Writer) {
 	fmt.Fprint(out, "\033[H\033[2J\033[3J")
 }
 
-func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, in io.Reader, out, errW io.Writer) error {
+func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, out, errW io.Writer) error {
 	input = strings.TrimSpace(input)
 
 	// Direct command execution with ! prefix or in shell mode
@@ -487,8 +494,11 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, in
 		// Falls through to LLM if input looks like natural language
 	}
 
-	resp, err := askWithFollowUp(ctx, s, "run", input, in, out, errW)
+	resp, err := askWithFollowUp(ctx, s, "run", input, out, errW)
 	if err != nil {
+		if errors.Is(err, ErrSlashCommand) {
+			return nil
+		}
 		return err
 	}
 
@@ -512,7 +522,7 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, in
 		fmt.Fprintln(out, "(dry-run: command not executed)")
 		return nil
 	}
-	return runCommandWithCorrection(ctx, s, rf, resp, in, out, errW)
+	return runCommandWithCorrection(ctx, s, rf, resp, out, errW)
 }
 
 // looksLikeShellCommand проверяет, похож ли ввод на shell-команду.
@@ -590,7 +600,7 @@ func (s *spin) stop() {
 
 // askWithFollowUp вызывает модель и, если в ответе есть question, задаёт его
 // пользователю, передаёт ответ обратно модели и повторяет, пока вопросов больше нет.
-func askWithFollowUp(ctx context.Context, s *session, mode, input string, in io.Reader, out, errW io.Writer) (prompt.Response, error) {
+func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, errW io.Writer) (prompt.Response, error) {
 	for {
 		resp, raw, err := s.askStream(ctx, mode, input, out)
 		if err != nil {
@@ -608,18 +618,30 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, in io.
 		fmt.Fprintf(out, "%s>%s ", yellow, reset)
 		flushOutput(out)
 
-		sc := bufio.NewScanner(in)
-		if !sc.Scan() {
+		if s.input == nil {
 			return resp, nil
 		}
-		answer := strings.TrimSpace(sc.Text())
+		answer, err := s.input.ReadLine()
+		if err != nil {
+			return resp, nil
+		}
+		answer = strings.TrimSpace(answer)
+
+		// If user enters a slash command during follow-up, handle it and stop
+		if strings.HasPrefix(answer, "/") {
+			if stop := handleSlash(answer, out, &s.cfg); stop {
+				return resp, context.Canceled
+			}
+			// For mode commands and others, stop follow-up loop and return
+			return resp, ErrSlashCommand
+		}
 
 		input = input + "\n" + answer
 	}
 }
 
 // runCommandWithCorrection выполняет команду, и в случае ошибки запрашивает автоисправление у LLM.
-func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, resp prompt.Response, in io.Reader, out, errW io.Writer) error {
+func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, resp prompt.Response, out, errW io.Writer) error {
 	dec := evaluatePolicy(resp)
 	if !dec.Allowed {
 		fmt.Fprintln(out, "(command blocked by security policy)")
@@ -627,7 +649,11 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	}
 
 	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		if !confirm(in, out, "execute?") {
+		ok, err := confirm(s.input, out, &s.cfg, "execute?")
+		if err != nil {
+			return err
+		}
+		if !ok {
 			fmt.Fprintln(out, "(cancelled)")
 			return nil
 		}
@@ -684,7 +710,11 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 		return nil
 	}
 
-	if !confirm(in, out, "execute corrected command?") {
+	ok, err := confirm(s.input, out, &s.cfg, "execute corrected command?")
+	if err != nil {
+		return err
+	}
+	if !ok {
 		fmt.Fprintln(out, "(cancelled)")
 		return nil
 	}

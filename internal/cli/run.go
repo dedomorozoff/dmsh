@@ -31,10 +31,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-	resp, err := askWithFollowUp(ctx, s, "run", input, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
+			s.SetInput(NewBufioReader(cmd.InOrStdin()))
+			resp, err := askWithFollowUp(ctx, s, "run", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
 				if resp.Intent != prompt.IntentRunCommand {
 				return nil
 			}
@@ -42,7 +43,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "(dry-run: command not executed)")
 				return nil
 			}
-			return runCommandWithCorrection(ctx, s, rf, resp, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runCommandWithCorrection(ctx, s, rf, resp, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 }

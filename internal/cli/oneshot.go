@@ -23,7 +23,8 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		ctx = context.Background()
 	}
 
-	resp, err := askWithFollowUp(ctx, s, "run", input, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	s.SetInput(NewBufioReader(cmd.InOrStdin()))
+	resp, err := askWithFollowUp(ctx, s, "run", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,11 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		return nil
 	}
 	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		if !confirm(cmd.InOrStdin(), cmd.OutOrStdout(), "execute?") {
+		ok, err := confirm(s.input, cmd.OutOrStdout(), &s.cfg, "execute?")
+		if err != nil {
+			return err
+		}
+		if !ok {
 			fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
 			return nil
 		}

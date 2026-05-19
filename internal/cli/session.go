@@ -30,6 +30,7 @@ type session struct {
 	engine llm.Engine
 	recent []string
 	hist   []HistoryEntry
+	input  LineReader
 }
 
 func newSession(cfg config.Config) (*session, error) {
@@ -89,6 +90,11 @@ func (s *session) close() {
 	}
 	// Save history
 	_ = s.saveHistory()
+}
+
+// SetInput sets the line reader for interactive prompts.
+func (s *session) SetInput(r LineReader) {
+	s.input = r
 }
 
 // saveHistory сохраняет историю в файл.
