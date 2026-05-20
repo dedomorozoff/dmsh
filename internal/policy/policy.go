@@ -33,6 +33,17 @@ var dangerPatternsUnix = []pattern{
 	{regexp.MustCompile(`(?i)wget\s+[^|]*\|\s*(sudo\s+)?(ba)?sh\b`), "wget | sh"},
 	{regexp.MustCompile(`(?i)\bshutdown\b|\breboot\b|\bhalt\b|\bpoweroff\b`), "shutdown/reboot"},
 	{regexp.MustCompile(`(?i)\biptables\s+-F\b`), "сброс iptables"},
+	{regexp.MustCompile(`(?i)\bcurl\s+[^|]*\|\s*bash\b`), "curl | bash"},
+	{regexp.MustCompile(`(?i)\b(base64|xxd)\s+[^|]*-d\s+[^|]*\|\s*(sudo\s+)?(ba)?sh\b`), "decode | sh"},
+	{regexp.MustCompile(`(?i)\bncat\b`), "ncat"},
+	{regexp.MustCompile(`(?i)\bsocat\b`), "socat"},
+	{regexp.MustCompile(`(?i)\bmount\s+/dev/\S+\s+/etc\b`), "mount на /etc"},
+	{regexp.MustCompile(`(?i)\b(insmod|modprobe)\b.*\b.ko\b`), "загрузка kernel module"},
+	{regexp.MustCompile(`(?i)\bsetenforce\s+0\b`), "отключение SELinux"},
+	{regexp.MustCompile(`(?i)\bvisudo\b`), "visudo"},
+	{regexp.MustCompile(`(?i)>\s*/etc/(passwd|shadow|sudoers)`), "запись в /etc/passwd|shadow|sudoers"},
+	{regexp.MustCompile(`(?i)\bfind\s+/\s+.*-exec\s+rm\s`), "find / ... -exec rm"},
+	{regexp.MustCompile(`(?i)\bxargs\s+rm\s`), "xargs rm"},
 }
 
 var suspiciousPatternsUnix = []*regexp.Regexp{
@@ -52,6 +63,15 @@ var dangerPatternsWindows = []pattern{
 	{regexp.MustCompile(`(?i)\bStop-Computer\b|\bRestart-Computer\b`), "shutdown/reboot"},
 	{regexp.MustCompile(`(?i)\bSet-ExecutionPolicy\s+(Bypass|Unrestricted)\b`), "Снятие ограничений PowerShell"},
 	{regexp.MustCompile(`(?i)\bDisable-NetFirewallRule\b|\bSet-NetFirewallProfile\s+.*-Enabled\s+False\b`), "Отключение брандмауэра"},
+	{regexp.MustCompile(`(?i)\bbcdedit\b`), "изменение boot configuration"},
+	{regexp.MustCompile(`(?i)\breg\s+add\s+HKLM\\`), "изменение системного реестра"},
+	{regexp.MustCompile(`(?i)\bschtasks\s+.*[/-]create\b`), "создание запланированной задачи"},
+	{regexp.MustCompile(`(?i)\bnet\s+user\s+.*\s+/add\b`), "создание учётной записи"},
+	{regexp.MustCompile(`(?i)\bpowershell\s+.*-enc(odedcommand)?\s+`), "PowerShell encoded command"},
+	{regexp.MustCompile(`(?i)\bbitsadmin\b.*/transfer\b`), "BITS download execution"},
+	{regexp.MustCompile(`(?i)\bcertutil\b.*-urlcache\b`), "certutil download"},
+	{regexp.MustCompile(`(?i)\bwmic\s+process\s+call\s+create\b`), "WMI process execution"},
+	{regexp.MustCompile(`(?i)\btakeown\b`), "take ownership of file/directory"},
 }
 
 var suspiciousPatternsWindows = []*regexp.Regexp{

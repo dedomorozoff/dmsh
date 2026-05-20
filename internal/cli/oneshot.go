@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dedomorozoff/nlsh/internal/executor"
@@ -26,11 +27,15 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	s.SetInput(NewBufioReader(cmd.InOrStdin()))
 	resp, err := askWithFollowUp(ctx, s, "run", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
+		if errors.Is(err, errCancelQuestion) {
+			fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
+			return nil
+		}
 		return err
 	}
 
 	dec := evaluatePolicy(resp)
-	renderResponse(cmd.OutOrStdout(), resp, dec)
+	_ = dec
 
 	if resp.Intent != prompt.IntentRunCommand {
 		return nil
@@ -61,7 +66,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		return nil
 	}
 
-	res := executor.Run(ctx, rf.cfg.Shell, resp.Command)
+	res := executor.RunInteractive(ctx, rf.cfg.Shell, resp.Command)
 	s.addRecent(resp.Command)
 	if res.Stdout != "" {
 		fmt.Fprint(cmd.OutOrStdout(), res.Stdout)

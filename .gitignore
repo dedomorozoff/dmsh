@@ -23,6 +23,12 @@ third_party/llama.cpp/build-*/
 models/
 *.gguf
 
+# Bundle directory
+bundle/
+
+# Installer outputs
+nlsh-setup-*.exe
+
 # Local config & logs
 .nlsh/
 *.log

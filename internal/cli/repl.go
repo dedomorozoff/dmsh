@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +30,8 @@ var (
 	red    = "\033[31m"
 	gray   = "\033[90m"
 )
+
+var errCancelQuestion = errors.New("cancelled")
 
 var slashCommands = []string{
 	"/exit", "/quit", "/help", "/cd", "/clear", "/pwd", "/history", "/bind", "/mode", "/1", "/2", "/3",
@@ -183,13 +184,6 @@ func shortPath(p string) string {
 		return "~" + strings.TrimPrefix(p, home)
 	}
 
-	if runtime.GOOS == "windows" {
-		if len(p) > 3 {
-			return p
-		}
-		return p
-	}
-
 	if len(p) > 40 {
 		return "..." + p[len(p)-37:]
 	}
@@ -209,6 +203,9 @@ func isTerminal(r io.Reader) bool {
 
 // replLoopReadline — REPL с readline-подобными хоткеями
 func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW io.Writer) error {
+	var rl *readline.Instance
+	var err error
+
 	usr, _ := user.Current()
 	hostname, _ := os.Hostname()
 
@@ -226,6 +223,34 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 		AutoComplete:    &slashCompleter{},
 	}
 
+	rlConfig.Listener = readline.FuncListener(func(line []rune, pos int, key rune) (newLine []rune, newPos int, ok bool) {
+		isFirstChar := false
+		if key == '/' {
+			if len(line) == 0 {
+				isFirstChar = true
+			} else if len(line) == 1 && line[0] == '/' {
+				isFirstChar = true
+			}
+		}
+		if isFirstChar {
+			fmt.Fprintf(out, "\n%sCommands:%s\n", cyan, reset)
+			fmt.Fprintf(out, "  %s/1%s, %s/mode 1%s  — AI mode (auto-execute)\n", yellow, reset, yellow, reset)
+			fmt.Fprintf(out, "  %s/2%s, %s/mode 2%s  — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
+			fmt.Fprintf(out, "  %s/3%s, %s/mode 3%s  — Shell mode (direct execution)\n", yellow, reset, yellow, reset)
+			fmt.Fprintf(out, "  %s/cd%s <path>    — change directory\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/pwd%s          — show current directory\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/history%s      — show command history\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/clear%s        — clear screen\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/mode%s         — show current mode\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/help%s         — show full help\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/exit%s         — exit REPL\n", yellow, reset)
+			if rl != nil {
+				rl.Refresh()
+			}
+		}
+		return nil, 0, false
+	})
+
 	// Filter input for special keys
 	ms := NewModeSwitcher(&s.cfg, out)
 	altEsc := false // tracks if last rune was ESC (for Alt+key detection)
@@ -239,13 +264,13 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 		if altEsc {
 			altEsc = false
 			switch r {
-			case '1':
+			case '1', 'i', 'I', 'a', 'A':
 				ms.Switch(config.ModeAI)
 				return 0, false
-			case '2':
+			case '2', 'h', 'H':
 				ms.Switch(config.ModeHelp)
 				return 0, false
-			case '3':
+			case '3', 's', 'S':
 				ms.Switch(config.ModeShell)
 				return 0, false
 			}
@@ -259,7 +284,7 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 		return r, true
 	}
 
-	rl, err := readline.NewEx(rlConfig)
+	rl, err = readline.NewEx(rlConfig)
 	if err != nil {
 		// Fallback to basic mode if readline fails
 		fmt.Fprintf(errW, "%sreadline initialization failed: %v, using basic mode%s\n", yellow, err, reset)
@@ -379,10 +404,10 @@ func showKeyBindings(out io.Writer) {
 	fmt.Fprintf(out, "  %sAlt+F%s      — forward one word\n", yellow, reset)
 	fmt.Fprintf(out, "  %sAlt+D%s      — delete forward one word\n", yellow, reset)
 	fmt.Fprintf(out, "  %sCtrl+W%s     — delete backward one word\n", yellow, reset)
-	fmt.Fprintf(out, "\n%sModes (commands):%s\n", bold, reset)
-	fmt.Fprintf(out, "  %s/1%s or %s/mode 1%s      — AI mode (auto-execute)\n", yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %s/2%s or %s/mode 2%s      — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %s/3%s or %s/mode 3%s      — Shell mode (direct execution)\n", yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "\n%sModes (shortcuts):%s\n", bold, reset)
+	fmt.Fprintf(out, "  %sAlt+1%s or %s/1%s or %s/mode 1%s      — AI mode (auto-execute)\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %sAlt+2%s or %s/2%s or %s/mode 2%s      — Help mode (command + explanation)\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %sAlt+3%s or %s/3%s or %s/mode 3%s      — Shell mode (direct execution)\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "\n%sSpecial:%s\n", bold, reset)
 	fmt.Fprintf(out, "  %s/exit%s      — exit REPL\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/cd%s path   — change directory\n", yellow, reset)
@@ -423,10 +448,10 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %sAlt+B%s      — back one word     %sAlt+F%s      — forward one word\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %sCtrl+W%s     — delete word back  %sAlt+D%s    — delete word forward\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %sCtrl+L%s     — clear screen      %s/exit%s      — exit\n\n", yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "%sModes (commands):%s\n", bold, reset)
-	fmt.Fprintf(out, "  %s/1%s or %s/mode 1%s      — AI mode (auto-execute)\n", yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %s/2%s or %s/mode 2%s      — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %s/3%s or %s/mode 3%s      — Shell mode (direct execution)\n\n", yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "%sModes (shortcuts):%s\n", bold, reset)
+	fmt.Fprintf(out, "  %sAlt+1%s or %s/1%s or %s/mode 1%s      — AI mode (auto-execute)\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %sAlt+2%s or %s/2%s or %s/mode 2%s      — Help mode (command + explanation)\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %sAlt+3%s or %s/3%s or %s/mode 3%s      — Shell mode (direct execution)\n\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "%sExamples:%s\n  show all txt files\n  find errors in logs\n  start docker\n\n", bold, reset)
 	fmt.Fprintf(out, "%s Default: %sdry-run=false%s (commands execute).\n  Use --dry-run to enable safe mode.\n\n", bold, green, reset)
 }
@@ -451,7 +476,7 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, ou
 			s.addRecentAndHistory(raw, "direct")
 			return nil
 		}
-		res := executor.Run(ctx, rf.cfg.Shell, raw)
+		res := executor.RunInteractive(ctx, rf.cfg.Shell, raw)
 		s.addRecentAndHistory(raw, "direct")
 		if res.Stdout != "" {
 			fmt.Fprint(out, res.Stdout)
@@ -478,7 +503,7 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, ou
 				s.addRecentAndHistory(input, "direct")
 				return nil
 			}
-			res := executor.Run(ctx, rf.cfg.Shell, input)
+			res := executor.RunInteractive(ctx, rf.cfg.Shell, input)
 			s.addRecentAndHistory(input, "direct")
 			if res.Stdout != "" {
 				fmt.Fprint(out, res.Stdout)
@@ -497,6 +522,10 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, ou
 	resp, err := askWithFollowUp(ctx, s, "run", input, out, errW)
 	if err != nil {
 		if errors.Is(err, ErrSlashCommand) {
+			return nil
+		}
+		if errors.Is(err, errCancelQuestion) {
+			fmt.Fprintln(out, "(cancelled)")
 			return nil
 		}
 		return err
@@ -615,8 +644,6 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 		}
 
 		fmt.Fprintf(out, "%s[nlsh]%s %s%s%s\n", cyan, reset, cyan, resp.Question, reset)
-		fmt.Fprintf(out, "%s>%s ", yellow, reset)
-		flushOutput(out)
 
 		if s.input == nil {
 			return resp, nil
@@ -626,6 +653,11 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 			return resp, nil
 		}
 		answer = strings.TrimSpace(answer)
+
+		lower := strings.ToLower(answer)
+		if lower == "/exit" || lower == "/cancel" || lower == "exit" || lower == "quit" {
+			return prompt.Response{}, errCancelQuestion
+		}
 
 		// If user enters a slash command during follow-up, handle it and stop
 		if strings.HasPrefix(answer, "/") {

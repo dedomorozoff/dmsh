@@ -9,19 +9,41 @@ import (
 	"strings"
 )
 
-func init() {
-	if runtime.GOOS == "windows" {
-		// Устанавливаем кодировку UTF-8 для консоли Windows
-		os.Setenv("CHCP", "65001")
-	}
-}
-
 // Result — итог выполнения команды.
 type Result struct {
 	ExitCode int
 	Stdout   string
 	Stderr   string
 	Err      error
+}
+
+// RunInteractive исполняет команду в интерактивном режиме с проксированием stdin, stdout, stderr.
+func RunInteractive(ctx context.Context, shell, command string) Result {
+	if strings.TrimSpace(command) == "" {
+		return Result{ExitCode: -1, Err: errEmpty}
+	}
+	if runtime.GOOS == "windows" {
+		if strings.Contains(strings.ToLower(shell), "powershell") || shell == "" {
+			command = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " + command
+		}
+	}
+	args := shellArgs(shell)
+	cmd := exec.CommandContext(ctx, args[0], append(args[1:], command)...)
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	res := Result{
+		Err:    err,
+	}
+	if cmd.ProcessState != nil {
+		res.ExitCode = cmd.ProcessState.ExitCode()
+	} else if err != nil {
+		res.ExitCode = -1
+	}
+	return res
 }
 
 // Run исполняет одну shell-командную строку, проксируя её в системный shell.
