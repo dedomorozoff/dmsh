@@ -176,7 +176,7 @@ func newReplCmd(rf *rootFlags) *cobra.Command {
 			out := cmd.OutOrStdout()
 			in := cmd.InOrStdin()
 
-		banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Use /1, /2, /3 to switch modes.%s\n\n",
+		banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
 			bold, cyan, reset, green, reset, gray, reset)
 			fmt.Fprint(out, banner)
 
@@ -317,11 +317,16 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 			fmt.Fprintf(out, "  %s/1%s, %s/mode 1%s  — AI mode (auto-execute)\n", yellow, reset, yellow, reset)
 			fmt.Fprintf(out, "  %s/2%s, %s/mode 2%s  — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
 			fmt.Fprintf(out, "  %s/3%s, %s/mode 3%s  — Shell mode (direct execution)\n", yellow, reset, yellow, reset)
+			fmt.Fprintf(out, "  %s/stats%s        — session statistics\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/retry%s        — re-run last request\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/export%s       — copy last command to clipboard\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/alias%s        — manage aliases\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/cd%s <path>    — change directory\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/pwd%s          — show current directory\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/history%s      — show command history\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/clear%s        — clear screen\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/mode%s         — show current mode\n", yellow, reset)
+			fmt.Fprintf(out, "  %s/bind%s         — show key bindings\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/help%s         — show full help\n", yellow, reset)
 			fmt.Fprintf(out, "  %s/exit%s         — exit REPL\n", yellow, reset)
 			if rl != nil {
@@ -622,6 +627,11 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/mode ai%s   or %s/mode 1%s or %s/1%s — AI mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/mode help%s or %s/mode 2%s or %s/2%s — Help mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/mode shell%s or %s/mode 3%s or %s/3%s — Shell mode\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/stats%s     — session statistics\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/retry%s     — re-run last request with alternate approach\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/export%s    — copy last command to clipboard or /export last > file\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/alias%s     — list aliases; /alias name=\"request\" to create; /alias -d name to delete\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/bind%s      — show key bindings\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/exit%s      — exit\n\n", yellow, reset)
 	fmt.Fprintf(out, "%sKeybindings (bash-style):%s\n", bold, reset)
 	fmt.Fprintf(out, "  %sCtrl+A%s     — start of line     %sCtrl+E%s     — end of line\n", yellow, reset, yellow, reset)
