@@ -34,7 +34,8 @@ var (
 var errCancelQuestion = errors.New("cancelled")
 
 var slashCommands = []string{
-	"/exit", "/quit", "/help", "/cd", "/clear", "/pwd", "/history", "/bind", "/mode", "/1", "/2", "/3",
+	"/exit", "/quit", "/help", "/cd", "/clear", "/pwd", "/history", "/bind", "/mode",
+	"/1", "/2", "/3", "/stats", "/retry", "/export", "/alias",
 }
 
 type slashCompleter struct {
@@ -103,6 +104,20 @@ func (c *slashCompleter) Do(line []rune, pos int) (newLine [][]rune, length int)
 				}
 			}
 			return matches, len([]rune(modePart))
+		}
+
+		// /alias <name>=... — complete alias names
+		if strings.HasPrefix(lineStr, "/alias ") && c.cfg != nil {
+			aliasInput := lineStr[len("/alias "):]
+			if !strings.Contains(aliasInput, "=") {
+				var matches [][]rune
+				for name := range c.cfg.Aliases {
+					if strings.HasPrefix(name, aliasInput) {
+						matches = append(matches, []rune(name[len(aliasInput):]))
+					}
+				}
+				return matches, len([]rune(aliasInput))
+			}
 		}
 
 		if !strings.Contains(lineStr, " ") {
@@ -212,7 +227,7 @@ func replLoop(ctx context.Context, s *session, rf *rootFlags, in io.Reader, out,
 		}
 
 		if strings.HasPrefix(line, "/") {
-			if stop := handleSlash(line, out, &s.cfg); stop {
+			if stop := handleSlash(line, out, s); stop {
 				return nil
 			}
 			continue
@@ -384,7 +399,7 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 		_ = rl.SaveHistory(line)
 
 		if strings.HasPrefix(line, "/") {
-			if stop := handleSlash(line, out, &s.cfg); stop {
+			if stop := handleSlash(line, out, s); stop {
 				return nil
 			}
 			continue
@@ -399,7 +414,8 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 	}
 }
 
-func handleSlash(line string, out io.Writer, cfg *config.Config) (stop bool) {
+func handleSlash(line string, out io.Writer, s *session) (stop bool) {
+	cfg := &s.cfg
 	switch {
 	case line == "/exit", line == "/quit", line == "exit", line == "quit":
 		fmt.Fprintln(out, "bye!")
@@ -427,6 +443,20 @@ func handleSlash(line string, out io.Writer, cfg *config.Config) (stop bool) {
 		printHistoryLimit(out, cfg.HistoryFile, 20)
 	case line == "/bind", line == "/bind keys":
 		showKeyBindings(out)
+	case line == "/stats":
+		showStats(out, s)
+	case line == "/retry":
+		// /retry перепросит последний запрос — обрабатывается в handleTurn
+		if s.lastInput == "" {
+			fmt.Fprintf(out, "%sNo previous request to retry.%s\n", yellow, reset)
+			return false
+		}
+		// возвращаем специальный сигнал — вызывающее место перехватит его через retrySignal
+		return false
+	case strings.HasPrefix(line, "/export"):
+		handleExport(line, out, s)
+	case strings.HasPrefix(line, "/alias"):
+		handleAlias(line, out, cfg)
 	case IsModeCommand(line):
 		ms := NewModeSwitcher(cfg, out)
 		if line == "/mode" {
@@ -446,6 +476,99 @@ func handleSlash(line string, out io.Writer, cfg *config.Config) (stop bool) {
 		fmt.Fprintf(out, "%sunknown command: %s%s\n", red, line, reset)
 	}
 	return false
+}
+
+// showStats печатает статистику сессии.
+func showStats(out io.Writer, s *session) {
+	elapsed := time.Since(s.stats.StartTime).Round(time.Second)
+	total := s.stats.CommandsLLM + s.stats.CommandsDirect
+	fmt.Fprintf(out, "\n%s%s=== Session Stats ===%s\n", bold, cyan, reset)
+	fmt.Fprintf(out, "  %sStarted:%s       %s ago\n", bold, reset, elapsed)
+	fmt.Fprintf(out, "  %sRequests:%s      %d\n", bold, reset, s.stats.Requests)
+	fmt.Fprintf(out, "  %sCommands run:%s  %d (LLM: %d, direct: %d)\n", bold, reset, total, s.stats.CommandsLLM, s.stats.CommandsDirect)
+	fmt.Fprintf(out, "  %sErrors fixed:%s  %d\n", bold, reset, s.stats.ErrorsFix)
+	fmt.Fprintf(out, "  %sCurrent mode:%s  %s\n\n", bold, reset, s.cfg.Mode)
+}
+
+// handleExport обрабатывает /export.
+func handleExport(line string, out io.Writer, s *session) {
+	// Берём последнюю команду из recent
+	if len(s.recent) == 0 {
+		fmt.Fprintf(out, "%sNo commands to export yet.%s\n", yellow, reset)
+		return
+	}
+	lastCmd := s.recent[len(s.recent)-1]
+
+	// /export last > file.sh
+	parts := strings.Fields(line)
+	if len(parts) >= 3 && parts[1] == "last" && parts[2] == ">" && len(parts) >= 4 {
+		filePath := strings.Join(parts[3:], " ")
+		if err := os.WriteFile(filePath, []byte(lastCmd+"\n"), 0644); err != nil {
+			fmt.Fprintf(out, "%scould not write file: %v%s\n", red, err, reset)
+			return
+		}
+		fmt.Fprintf(out, "%s✓ Written to %s%s\n", green, filePath, reset)
+		return
+	}
+
+	// /export [без аргументов] — копировать в буфер обмена
+	if err := copyToClipboard(lastCmd); err != nil {
+		fmt.Fprintf(out, "%sClipboard unavailable: %v%s\n", yellow, err, reset)
+		fmt.Fprintf(out, "%sLast command: %s%s%s\n", gray, cyan, lastCmd, reset)
+		return
+	}
+	fmt.Fprintf(out, "%s✓ Copied to clipboard:%s %s%s%s\n", green, reset, cyan, lastCmd, reset)
+}
+
+// handleAlias обрабатывает /alias.
+func handleAlias(line string, out io.Writer, cfg *config.Config) {
+	arg := strings.TrimSpace(strings.TrimPrefix(line, "/alias"))
+
+	if arg == "" {
+		// Показать все алиасы
+		if len(cfg.Aliases) == 0 {
+			fmt.Fprintf(out, "%sNo aliases defined. Use /alias name=\"request\"%s\n", gray, reset)
+			return
+		}
+		fmt.Fprintf(out, "\n%s%s=== Aliases ===%s\n", bold, cyan, reset)
+		for k, v := range cfg.Aliases {
+			fmt.Fprintf(out, "  %s%s%s = %s%s%s\n", yellow, k, reset, gray, v, reset)
+		}
+		fmt.Fprintln(out)
+		return
+	}
+
+	// /alias -d name — удалить
+	if strings.HasPrefix(arg, "-d ") {
+		name := strings.TrimSpace(arg[3:])
+		if _, ok := cfg.Aliases[name]; !ok {
+			fmt.Fprintf(out, "%salias %q not found%s\n", red, name, reset)
+			return
+		}
+		delete(cfg.Aliases, name)
+		_ = config.Save(*cfg)
+		fmt.Fprintf(out, "%s✓ Alias %q removed%s\n", green, name, reset)
+		return
+	}
+
+	// /alias name="request" — добавить
+	eqIdx := strings.IndexByte(arg, '=')
+	if eqIdx == -1 {
+		fmt.Fprintf(out, "%sUsage: /alias name=\"request\" or /alias -d name%s\n", yellow, reset)
+		return
+	}
+	name := strings.TrimSpace(arg[:eqIdx])
+	val := strings.Trim(strings.TrimSpace(arg[eqIdx+1:]), `"`)
+	if name == "" || val == "" {
+		fmt.Fprintf(out, "%sinvalid alias: name and value must not be empty%s\n", red, reset)
+		return
+	}
+	if cfg.Aliases == nil {
+		cfg.Aliases = make(map[string]string)
+	}
+	cfg.Aliases[name] = val
+	_ = config.Save(*cfg)
+	fmt.Fprintf(out, "%s✓ Alias %q = %q saved%s\n", green, name, val, reset)
 }
 
 func showKeyBindings(out io.Writer) {
@@ -522,6 +645,24 @@ func clearScreen(out io.Writer) {
 
 func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, in io.Reader, out, errW io.Writer) error {
 	input = strings.TrimSpace(input)
+
+	// /retry — повторить последний запрос с альтернативным подходом
+	if input == "/retry" {
+		if s.lastInput == "" {
+			fmt.Fprintf(out, "%sNo previous request to retry.%s\n", yellow, reset)
+			return nil
+		}
+		input = "Alternative approach needed. Previous attempt failed. " + s.lastInput
+		fmt.Fprintf(out, "%s[retry]%s %s\n", yellow, reset, s.lastInput)
+	}
+
+	// Раскрываем алиасы: если ввод совпадает с именем алиаса — заменяем
+	if s.cfg.Aliases != nil {
+		if expanded, ok := s.cfg.Aliases[input]; ok {
+			fmt.Fprintf(out, "%s[alias]%s %s → %s%s%s\n", gray, reset, input, cyan, expanded, reset)
+			input = expanded
+		}
+	}
 
 	// Direct command execution with ! prefix or in shell mode
 	if strings.HasPrefix(input, "!") {
@@ -762,6 +903,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	}
 
 	fmt.Fprintf(out, "\n%s[nlsh]%s Error detected (code %d). Requesting auto-correction from LLM...\n", yellow, reset, res.ExitCode)
+	s.stats.ErrorsFix++
 
 	correctionInput := fmt.Sprintf("Command '%s' failed.\nExit code: %d\nStderr:\n%s\n\nPlease fix the command so it runs successfully on the current OS.", resp.Command, res.ExitCode, stderr)
 

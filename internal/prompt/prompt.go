@@ -6,16 +6,26 @@ import (
 	"strings"
 )
 
+// Turn — пара запрос/ответ для multi-turn контекста.
+type Turn struct {
+	User      string
+	Assistant string // краткое описание: команда или объяснение
+}
+
 // Context — это окружение, которое мы инжектим в системный промпт.
 type Context struct {
-	OS          string
-	Shell       string
-	CWD         string
-	RecentCmds  []string
-	UserRequest string
+	OS           string
+	Shell        string
+	CWD          string
+	RecentCmds   []string
+	UserRequest  string
 	// Mode задаёт ожидаемый intent: ask -> только explain/ask_clarification,
 	// run -> предпочтительно run_command. Пусто = без ограничения.
 	Mode string
+	// StdinContext содержит данные, прочитанные из stdin (pipe-режим).
+	StdinContext string
+	// RecentTurns — последние N пар диалога для multi-turn контекста.
+	RecentTurns []Turn
 }
 
 const systemPromptBase = `You are nlsh, an intelligent natural language shell assistant.
@@ -110,6 +120,16 @@ func BuildSystem(ctx Context) string {
 		for _, c := range ctx.RecentCmds {
 			fmt.Fprintf(&b, "  * %s\n", c)
 		}
+	}
+	if len(ctx.RecentTurns) > 0 {
+		b.WriteString("\nConversation so far:\n")
+		for _, t := range ctx.RecentTurns {
+			fmt.Fprintf(&b, "  User: %s\n", t.User)
+			fmt.Fprintf(&b, "  Assistant: %s\n", t.Assistant)
+		}
+	}
+	if ctx.StdinContext != "" {
+		fmt.Fprintf(&b, "\nStdin input (piped data):\n%s\n", ctx.StdinContext)
 	}
 	if ctx.Mode != "" {
 		fmt.Fprintf(&b, "\nCurrent mode: %s\n", ctx.Mode)

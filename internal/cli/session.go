@@ -23,13 +23,26 @@ type HistoryEntry struct {
 	Source    string    `json:"source"` // "llm" or "direct"
 }
 
+// SessionStats — статистика текущей сессии.
+type SessionStats struct {
+	StartTime    time.Time
+	Requests     int
+	CommandsLLM  int
+	CommandsDirect int
+	ErrorsFix    int
+}
+
 // session инкапсулирует движок и собранный для него контекст промпта.
 // Один session живёт всё время REPL или одной CLI-команды.
 type session struct {
-	cfg    config.Config
-	engine llm.Engine
-	recent []string
-	hist   []HistoryEntry
+	cfg       config.Config
+	engine    llm.Engine
+	recent    []string
+	hist      []HistoryEntry
+	stats     SessionStats
+	lastInput string          // последний запрос пользователя (для /retry)
+	turns     []prompt.Turn   // последние 5 пар диалога
+	stdinCtx  string          // данные из stdin pipe
 }
 
 func newSession(cfg config.Config) (*session, error) {
@@ -48,7 +61,11 @@ func newSession(cfg config.Config) (*session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load model: %w", err)
 	}
-	return &session{cfg: cfg, engine: eng}, nil
+	return &session{
+		cfg:    cfg,
+		engine: eng,
+		stats:  SessionStats{StartTime: time.Now()},
+	}, nil
 }
 
 func resolveModelPath(cfg config.Config) (string, error) {
@@ -130,6 +147,8 @@ func (s *session) addHistory(cmd, source string) {
 // ask отправляет запрос модели и пытается вытащить из ответа Response.
 // Один retry в случае невалидного JSON: добавляем repair-инструкцию.
 func (s *session) ask(ctx context.Context, mode, userInput string) (prompt.Response, string, error) {
+	s.stats.Requests++
+	s.lastInput = userInput
 	cwd, _ := os.Getwd()
 	pctx := prompt.Context{
 		OS:          osName(),
@@ -138,6 +157,8 @@ func (s *session) ask(ctx context.Context, mode, userInput string) (prompt.Respo
 		RecentCmds:  s.recent,
 		UserRequest: userInput,
 		Mode:        string(s.cfg.Mode),
+		StdinContext: s.stdinCtx,
+		RecentTurns: s.turns,
 	}
 	system := prompt.BuildSystem(pctx)
 	user := prompt.BuildUser(pctx)
@@ -155,6 +176,12 @@ func (s *session) ask(ctx context.Context, mode, userInput string) (prompt.Respo
 	}
 	resp, perr := prompt.Parse(raw)
 	if perr == nil {
+		// Сохраняем пару диалога
+		asst := resp.Command
+		if asst == "" {
+			asst = resp.Explanation
+		}
+		s.addTurn(userInput, asst)
 		return resp, raw, nil
 	}
 
@@ -185,18 +212,35 @@ func (s *session) addRecent(cmd string) {
 func (s *session) addRecentAndHistory(cmd, source string) {
 	s.addRecent(cmd)
 	s.addHistory(cmd, source)
+	if source == "llm" {
+		s.stats.CommandsLLM++
+	} else {
+		s.stats.CommandsDirect++
+	}
+}
+
+// addTurn добавляет пару диалога (последние 5 пар).
+func (s *session) addTurn(user, assistant string) {
+	s.turns = append(s.turns, prompt.Turn{User: user, Assistant: assistant})
+	if len(s.turns) > 5 {
+		s.turns = s.turns[len(s.turns)-5:]
+	}
 }
 
 // askStream отправляет запрос модели и стримит вывод полей на экран в реальном времени.
 func (s *session) askStream(ctx context.Context, mode, userInput string, out io.Writer) (prompt.Response, string, error) {
+	s.stats.Requests++
+	s.lastInput = userInput
 	cwd, _ := os.Getwd()
 	pctx := prompt.Context{
-		OS:          osName(),
-		Shell:       s.cfg.Shell,
-		CWD:         cwd,
-		RecentCmds:  s.recent,
-		UserRequest: userInput,
-		Mode:        string(s.cfg.Mode),
+		OS:           osName(),
+		Shell:        s.cfg.Shell,
+		CWD:          cwd,
+		RecentCmds:   s.recent,
+		UserRequest:  userInput,
+		Mode:         string(s.cfg.Mode),
+		StdinContext:  s.stdinCtx,
+		RecentTurns:  s.turns,
 	}
 	system := prompt.BuildSystem(pctx)
 	user := prompt.BuildUser(pctx)
@@ -265,6 +309,12 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	rawStr := raw.String()
 	resp, perr := prompt.Parse(rawStr)
 	if perr == nil {
+		// Сохраняем пару диалога для multi-turn контекста
+		asst := resp.Command
+		if asst == "" {
+			asst = resp.Explanation
+		}
+		s.addTurn(userInput, asst)
 		return resp, rawStr, nil
 	}
 

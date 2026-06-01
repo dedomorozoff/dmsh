@@ -35,8 +35,9 @@ type Config struct {
 	HistoryFile        string   `json:"history_file"`
 	DryRun             bool     `json:"dry_run"`
 	Mode               Mode     `json:"mode"`
-	DangerPatterns     []string `json:"danger_patterns,omitempty"`
-	SuspiciousPatterns []string `json:"suspicious_patterns,omitempty"`
+	DangerPatterns     []string          `json:"danger_patterns,omitempty"`
+	SuspiciousPatterns []string          `json:"suspicious_patterns,omitempty"`
+	Aliases            map[string]string `json:"aliases,omitempty"`
 }
 
 // HardwareInfo содержит информацию о возможностях системы.
