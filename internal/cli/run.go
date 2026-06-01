@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dedomorozoff/nlsh/internal/config"
 	"github.com/dedomorozoff/nlsh/internal/policy"
 	"github.com/dedomorozoff/nlsh/internal/prompt"
 	"github.com/spf13/cobra"
@@ -52,9 +53,12 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 }
 
 // evaluatePolicy — обёртка над policy.Evaluate, удобная для render-слоя.
-func evaluatePolicy(resp prompt.Response) policy.Decision {
+func evaluatePolicy(resp prompt.Response, cfg *config.Config) policy.Decision {
 	if resp.Intent != prompt.IntentRunCommand {
 		return policy.Decision{Allowed: true, Risk: prompt.RiskLow}
 	}
-	return policy.Evaluate(resp.Command, resp.Risk)
+	if cfg == nil {
+		return policy.Evaluate(resp.Command, resp.Risk, nil, nil)
+	}
+	return policy.Evaluate(resp.Command, resp.Risk, cfg.DangerPatterns, cfg.SuspiciousPatterns)
 }

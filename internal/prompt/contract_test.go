@@ -71,3 +71,35 @@ func TestValidate_UnknownIntent(t *testing.T) {
 		t.Fatal("expected error for unknown intent")
 	}
 }
+
+func TestParse_FallbackParser(t *testing.T) {
+	// Case 1: Trailing comma (invalid JSON, but captured by fallback)
+	rawTrailing := `{
+		"intent": "run_command",
+		"command": "ls -l",
+		"explanation": "list files",
+		"risk_level": "low",
+	}`
+	r, err := Parse(rawTrailing)
+	if err != nil {
+		t.Fatalf("expected fallback parsing to succeed, got error: %v", err)
+	}
+	if r.Intent != IntentRunCommand || r.Command != "ls -l" || r.Explanation != "list files" {
+		t.Fatalf("unexpected parsed values: %+v", r)
+	}
+
+	// Case 2: Truncated JSON without closing brackets
+	rawTruncated := `{
+		"intent": "run_command",
+		"command": "echo \"hello world\"",
+		"explanation": "print greeting"
+	`
+	r2, err := Parse(rawTruncated)
+	if err != nil {
+		t.Fatalf("expected fallback parsing to succeed for truncated JSON, got error: %v", err)
+	}
+	if r2.Intent != IntentRunCommand || r2.Command != `echo "hello world"` || r2.Explanation != "print greeting" {
+		t.Fatalf("unexpected parsed values: %+v", r2)
+	}
+}
+

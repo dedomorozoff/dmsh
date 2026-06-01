@@ -84,12 +84,27 @@ var suspiciousPatternsWindows = []*regexp.Regexp{
 }
 
 // Evaluate проверяет команду и возвращает решение. Если команда есть в
-// dangerPatterns — Allowed=false: shell обязан спросить подтверждение
+// dangerPatterns или userDanger — Allowed=false: shell обязан спросить подтверждение
 // (или, в --strict, отказать вовсе). Иначе мы лишь корректируем risk.
-func Evaluate(cmd string, suggested prompt.Risk) Decision {
+func Evaluate(cmd string, suggested prompt.Risk, userDanger []string, userSuspicious []string) Decision {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return Decision{Allowed: false, Risk: prompt.RiskHigh, Reason: "пустая команда"}
+	}
+
+	// Сначала проверяем пользовательские опасные паттерны
+	for _, pat := range userDanger {
+		pat = strings.TrimSpace(pat)
+		if pat == "" {
+			continue
+		}
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			continue
+		}
+		if re.MatchString(cmd) {
+			return Decision{Allowed: false, Risk: prompt.RiskHigh, Reason: "пользовательское правило безопасности: " + pat}
+		}
 	}
 
 	dangerPats := dangerPatternsUnix
@@ -110,12 +125,31 @@ func Evaluate(cmd string, suggested prompt.Risk) Decision {
 		risk = prompt.RiskLow
 	}
 
-	for _, re := range suspiciousPats {
+	// Проверяем пользовательские подозрительные паттерны
+	for _, pat := range userSuspicious {
+		pat = strings.TrimSpace(pat)
+		if pat == "" {
+			continue
+		}
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			continue
+		}
 		if re.MatchString(cmd) {
 			if risk == prompt.RiskLow {
 				risk = prompt.RiskMedium
 			}
 			break
+		}
+	}
+
+	// Если уже стал RiskMedium/High, то стандартные правила не переопределят
+	if risk == prompt.RiskLow {
+		for _, re := range suspiciousPats {
+			if re.MatchString(cmd) {
+				risk = prompt.RiskMedium
+				break
+			}
 		}
 	}
 	return Decision{Allowed: true, Risk: risk}

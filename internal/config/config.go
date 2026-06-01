@@ -32,9 +32,11 @@ type Config struct {
 	Temperature float32 `json:"temperature"`
 	TopP        float32 `json:"top_p"`
 	Shell       string  `json:"shell"`
-	HistoryFile string  `json:"history_file"`
-	DryRun      bool    `json:"dry_run"`
-	Mode        Mode    `json:"mode"`
+	HistoryFile        string   `json:"history_file"`
+	DryRun             bool     `json:"dry_run"`
+	Mode               Mode     `json:"mode"`
+	DangerPatterns     []string `json:"danger_patterns,omitempty"`
+	SuspiciousPatterns []string `json:"suspicious_patterns,omitempty"`
 }
 
 // HardwareInfo содержит информацию о возможностях системы.

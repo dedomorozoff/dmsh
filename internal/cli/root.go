@@ -51,6 +51,8 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newRunCmd(rf))
 	cmd.AddCommand(newReplCmd(rf))
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newConfigCmd())
+	cmd.AddCommand(newHistoryCmd())
 	addModelCommand(cmd, rf)
 
 	return cmd

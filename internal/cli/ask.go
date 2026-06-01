@@ -37,7 +37,7 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 				}
 				return err
 			}
-			_ = evaluatePolicy(resp)
+			_ = evaluatePolicy(resp, &rf.cfg)
 			return nil
 		},
 	}

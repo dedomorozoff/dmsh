@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -69,6 +70,9 @@ func (r *Response) Validate() error {
 func Parse(raw string) (Response, error) {
 	objects := extractAllJSONObjects(raw)
 	if len(objects) == 0 {
+		if fallbackResp, err := parseFallback(raw); err == nil {
+			return fallbackResp, nil
+		}
 		return Response{}, fmt.Errorf("no JSON object found in model output")
 	}
 
@@ -101,7 +105,66 @@ func Parse(raw string) (Response, error) {
 		}
 		return resp, nil
 	}
+
+	if fallbackResp, err := parseFallback(raw); err == nil {
+		return fallbackResp, nil
+	}
+
 	return Response{}, fmt.Errorf("invalid response: %w", lastErr)
+}
+
+func parseFallback(raw string) (Response, error) {
+	var resp Response
+
+	// Extract intent
+	reIntent := regexp.MustCompile(`"intent"\s*:\s*"([^"]+)"`)
+	if match := reIntent.FindStringSubmatch(raw); len(match) > 1 {
+		resp.Intent = Intent(match[1])
+	}
+
+	// Extract command (handling escaped quotes inside)
+	reCommand := regexp.MustCompile(`"command"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	if match := reCommand.FindStringSubmatch(raw); len(match) > 1 {
+		resp.Command = unescapeString(match[1])
+	}
+
+	// Extract explanation
+	reExplanation := regexp.MustCompile(`"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	if match := reExplanation.FindStringSubmatch(raw); len(match) > 1 {
+		resp.Explanation = unescapeString(match[1])
+	}
+
+	// Extract question
+	reQuestion := regexp.MustCompile(`"question"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	if match := reQuestion.FindStringSubmatch(raw); len(match) > 1 {
+		resp.Question = unescapeString(match[1])
+	}
+
+	// Extract risk_level
+	reRisk := regexp.MustCompile(`"risk_level"\s*:\s*"([^"]+)"`)
+	if match := reRisk.FindStringSubmatch(raw); len(match) > 1 {
+		resp.Risk = Risk(match[1])
+	}
+
+	// Extract needs_confirmation
+	reConfirm := regexp.MustCompile(`"needs_confirmation"\s*:\s*(true|false)`)
+	if match := reConfirm.FindStringSubmatch(raw); len(match) > 1 {
+		resp.NeedsConfirmation = match[1] == "true"
+	}
+
+	if err := resp.Validate(); err != nil {
+		return Response{}, fmt.Errorf("fallback validation failed: %w", err)
+	}
+
+	return resp, nil
+}
+
+func unescapeString(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\t`, "\t")
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
 }
 
 // extractAllJSONObjects извлекает все сбалансированные JSON-объекты из строки.

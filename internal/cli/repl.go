@@ -37,37 +37,104 @@ var slashCommands = []string{
 	"/exit", "/quit", "/help", "/cd", "/clear", "/pwd", "/history", "/bind", "/mode", "/1", "/2", "/3",
 }
 
-type slashCompleter struct{}
+type slashCompleter struct {
+	cfg *config.Config
+}
+
+func autocompletePaths(pathPart string, dirsOnly bool) ([][]rune, int) {
+	var searchDir string
+	var filePrefix string
+
+	lastSep := strings.LastIndexAny(pathPart, "/\\")
+	if lastSep == -1 {
+		searchDir = "."
+		filePrefix = pathPart
+	} else {
+		searchDir = pathPart[:lastSep]
+		if searchDir == "" {
+			searchDir = "/"
+		}
+		filePrefix = pathPart[lastSep+1:]
+	}
+
+	entries, err := os.ReadDir(searchDir)
+	if err != nil {
+		return nil, 0
+	}
+
+	var suggestions [][]rune
+	for _, entry := range entries {
+		if dirsOnly && !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(strings.ToLower(name), strings.ToLower(filePrefix)) {
+			rem := name[len(filePrefix):]
+			if entry.IsDir() {
+				rem += "/"
+			}
+			suggestions = append(suggestions, []rune(rem))
+		}
+	}
+	return suggestions, len([]rune(filePrefix))
+}
 
 func (c *slashCompleter) Do(line []rune, pos int) (newLine [][]rune, length int) {
-	if pos == 0 || line[0] != '/' {
+	if pos == 0 {
 		return nil, 0
 	}
 
-	prefix := string(line[:pos])
+	lineStr := string(line[:pos])
 
-	if prefix == "/mode " {
-		suggestions := [][]rune{
-			[]rune("ai"), []rune("help"), []rune("shell"),
-			[]rune("1"), []rune("2"), []rune("3"),
+	if lineStr[0] == '/' {
+		if strings.HasPrefix(lineStr, "/cd ") {
+			pathPart := lineStr[len("/cd "):]
+			sugs, lenPref := autocompletePaths(pathPart, true)
+			return sugs, lenPref
 		}
-		return suggestions, 0
-	}
 
-	if prefix == "/cd " {
+		if strings.HasPrefix(lineStr, "/mode ") {
+			modePart := lineStr[len("/mode "):]
+			modes := []string{"ai", "help", "shell"}
+			var matches [][]rune
+			for _, m := range modes {
+				if strings.HasPrefix(m, modePart) {
+					matches = append(matches, []rune(m[len(modePart):]))
+				}
+			}
+			return matches, len([]rune(modePart))
+		}
+
+		if !strings.Contains(lineStr, " ") {
+			var matches [][]rune
+			for _, cmd := range slashCommands {
+				if strings.HasPrefix(cmd, lineStr) {
+					matches = append(matches, []rune(cmd[len(lineStr):]))
+				}
+			}
+			return matches, len([]rune(lineStr))
+		}
 		return nil, 0
 	}
 
-	var matches [][]rune
-	for _, cmd := range slashCommands {
-		if strings.HasPrefix(cmd, prefix) {
-			matches = append(matches, []rune(cmd[len(prefix):]))
+	isShellMode := c.cfg != nil && c.cfg.Mode == config.ModeShell
+	if lineStr[0] == '!' || isShellMode {
+		lastSpace := strings.LastIndexByte(lineStr, ' ')
+		var lastWord string
+		if lastSpace == -1 {
+			if lineStr[0] == '!' {
+				lastWord = lineStr[1:]
+			} else {
+				lastWord = lineStr
+			}
+		} else {
+			lastWord = lineStr[lastSpace+1:]
 		}
+
+		sugs, lenPref := autocompletePaths(lastWord, false)
+		return sugs, lenPref
 	}
 
-	if len(matches) > 0 {
-		return matches, len([]rune(prefix))
-	}
 	return nil, 0
 }
 
@@ -218,7 +285,7 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 		HistoryLimit:    1000,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
-		AutoComplete:    &slashCompleter{},
+		AutoComplete:    &slashCompleter{cfg: &s.cfg},
 	}
 
 	rlConfig.Listener = readline.FuncListener(func(line []rune, pos int, key rune) (newLine []rune, newPos int, ok bool) {
@@ -357,7 +424,7 @@ func handleSlash(line string, out io.Writer, cfg *config.Config) (stop bool) {
 		wd, _ := os.Getwd()
 		fmt.Fprintln(out, wd)
 	case line == "/history", line == "history":
-		fmt.Fprintln(out, "history... (use Ctrl+R to search)")
+		printHistoryLimit(out, cfg.HistoryFile, 20)
 	case line == "/bind", line == "/bind keys":
 		showKeyBindings(out)
 	case IsModeCommand(line):
@@ -649,7 +716,7 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, in io.
 
 // runCommandWithCorrection выполняет команду, и в случае ошибки запрашивает автоисправление у LLM.
 func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, resp prompt.Response, in io.Reader, out, errW io.Writer) error {
-	dec := evaluatePolicy(resp)
+	dec := evaluatePolicy(resp, &rf.cfg)
 	if !dec.Allowed {
 		fmt.Fprintln(out, "(command blocked by security policy)")
 		return nil
@@ -707,7 +774,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 		return nil
 	}
 
-	decCorr := evaluatePolicy(corrResp)
+	decCorr := evaluatePolicy(corrResp, &rf.cfg)
 	if !decCorr.Allowed {
 		fmt.Fprintln(out, "(corrected command blocked by security policy)")
 		return nil
