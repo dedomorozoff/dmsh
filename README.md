@@ -77,9 +77,8 @@ You can override these values via CLI flags or config file.
 ## Requirements
 
 - Go 1.22+
-- C/C++ тулчейн (gcc/clang, make, cmake)
-- Git с поддержкой submodules
-- GGUF-модель (например, Qwen2.5-3B-Instruct, Llama-3.2-3B-Instruct, Phi-3.5-mini)
+- C/C++ toolchain with submodules
+- GGUF-model (Qwen2.5-3B-Instruct, Llama-3.2-3B-Instruct, Phi-3.5-mini)
 
 ## Building
 
@@ -142,4 +141,4 @@ third_party/llama.cpp/  submodule with llama.cpp
 
 ## Status
 
-Early MVP. See plan in `.cursor/plans/`.
+Early Beta.
