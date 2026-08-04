@@ -67,7 +67,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		return nil
 	}
 	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		ok, err := confirm(s.input, cmd.OutOrStdout(), &s.cfg, "execute?")
+		ok, err := confirm(s.input, cmd.OutOrStdout(), s, "execute?")
 		if err != nil {
 			return err
 		}

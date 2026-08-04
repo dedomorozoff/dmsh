@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/dedomorozoff/nlsh/internal/config"
 )
 
 // confirm спрашивает пользователя y/n. Возвращает true только при явном yes.
 // Если пользователь вводит slash-команду, она обрабатывается и возвращается ErrSlashCommand.
-func confirm(r LineReader, out io.Writer, cfg *config.Config, promptText string) (bool, error) {
+func confirm(r LineReader, out io.Writer, s *session, promptText string) (bool, error) {
 	fmt.Fprintf(out, "%s [y/N]: ", promptText)
 	answer, err := r.ReadLine()
 	if err != nil {
@@ -25,7 +23,7 @@ func confirm(r LineReader, out io.Writer, cfg *config.Config, promptText string)
 
 	// If user enters a slash command during confirmation, handle it
 	if strings.HasPrefix(answer, "/") {
-		if stop := handleSlash(answer, out, cfg); stop {
+		if stop := handleSlash(answer, out, s); stop {
 			return false, context.Canceled
 		}
 		return false, ErrSlashCommand

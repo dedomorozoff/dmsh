@@ -879,7 +879,7 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 
 		// If user enters a slash command during follow-up, handle it and stop
 		if strings.HasPrefix(answer, "/") {
-			if stop := handleSlash(answer, out, &s.cfg); stop {
+			if stop := handleSlash(answer, out, s); stop {
 				return resp, context.Canceled
 			}
 			// For mode commands and others, stop follow-up loop and return
@@ -899,7 +899,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	}
 
 	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		ok, err := confirm(s.input, out, &s.cfg, "execute?")
+		ok, err := confirm(s.input, out, s, "execute?")
 		if err != nil {
 			return err
 		}
@@ -961,7 +961,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 		return nil
 	}
 
-	ok, err := confirm(s.input, out, &s.cfg, "execute corrected command?")
+	ok, err := confirm(s.input, out, s, "execute corrected command?")
 	if err != nil {
 		return err
 	}
