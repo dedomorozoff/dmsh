@@ -11,7 +11,10 @@ LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(shell gi
 
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0
-CMAKE_FLAGS := -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=OFF
+# Портативная сборка: без AVX2/FMA/AVX512/BMI2, чтобы бинарник работал на старых CPU.
+# При желании ускорения на конкретной машине можно переопределить: make CMAKE_ARCH_FLAGS="-DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_BMI2=ON"
+CMAKE_ARCH_FLAGS ?= -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_AVX512=OFF -DGGML_BMI2=OFF
+CMAKE_FLAGS := -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=OFF $(CMAKE_ARCH_FLAGS)
 ifeq ($(GPU),cuda)
 CMAKE_FLAGS += -DGGML_CUDA=ON
 endif
@@ -27,9 +30,23 @@ LLAMA_JOBS ?= 2
 
 # Windows-specific DLLs from MinGW
 MINGW_BIN := /c/ProgramData/mingw64/mingw64/bin
-WINDOWS_DLLS := $(MINGW_BIN)/libstdc++-6.dll $(MINGW_BIN)/libgcc_s_seh-1.dll $(MINGW_BIN)/libgomp-1.dll $(MINGW_BIN)/libwinpthread-1.dll
 
-llama-prepare: submodule
+.DEFAULT_GOAL := help
+.PHONY: help
+help: ## Показать список доступных целей
+	@echo "nlsh targets:"
+	@echo
+	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*##"} {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+	@echo
+	@echo "Useful variables: GOFLAGS, LDFLAGS, GPU (0|cuda|metal|vulkan), LLAMA_JOBS, CMAKE_ARCH_FLAGS"
+
+.PHONY: submodule
+submodule: ## Инициализировать и обновить вложенный модуль llama.cpp
+	git submodule update --init --recursive
+
+.PHONY: llama-prepare llama
+llama-prepare: submodule ## Собрать llama.cpp (CGO) для текущей платформы
 ifeq ($(IS_UNIX),1)
 	cmake -S $(LLAMA_DIR) -B $(LLAMA_BUILD) $(CMAKE_FLAGS)
 	cmake --build $(LLAMA_BUILD) --config Release --parallel $(LLAMA_JOBS)
@@ -42,7 +59,7 @@ endif
 llama: llama-prepare
 
 .PHONY: build
-build:
+build: llama-prepare ## Собрать релизный бинарник (llama, CGO)
 ifeq ($(IS_UNIX),1)
 	$(GO) build $(GOFLAGS) -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh ./cmd/nlsh
 else
@@ -52,15 +69,15 @@ else
 endif
 
 .PHONY: build-stub
-build-stub:
+build-stub: ## Собрать бинарник без CGO/llama
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/nlsh ./cmd/nlsh
 
 # Сборка для всех платформ (для локального создания релизов)
 .PHONY: build-all
-build-all: build-windows build-linux build-macos build-freebsd
+build-all: build-windows build-linux build-macos build-freebsd ## Собрать бинарники для всех платформ
 
 .PHONY: build-windows
-build-windows:
+build-windows: ## Собрать Windows-бинарник
 ifeq ($(IS_UNIX),1)
 ifneq ($(findstring CYGWIN,$(UNAME_S))$(findstring MSYS,$(UNAME_S)),)
 	mkdir -p bin
@@ -79,7 +96,7 @@ else
 endif
 
 .PHONY: build-linux
-build-linux:
+build-linux: ## Собрать Linux-бинарник
 ifeq ($(shell uname -s 2>/dev/null),Linux)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-linux-amd64 ./cmd/nlsh
 else
@@ -92,7 +109,7 @@ endif
 endif
 
 .PHONY: build-macos
-build-macos:
+build-macos: ## Собрать macOS-бинарники (amd64 + arm64)
 ifeq ($(shell uname -s 2>/dev/null),Darwin)
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-amd64 ./cmd/nlsh
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-arm64 ./cmd/nlsh
@@ -108,7 +125,7 @@ endif
 endif
 
 .PHONY: build-freebsd
-build-freebsd:
+build-freebsd: ## Собрать FreeBSD-бинарник
 ifeq ($(shell uname -s 2>/dev/null),FreeBSD)
 	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-freebsd-amd64 ./cmd/nlsh
 else
@@ -121,11 +138,11 @@ endif
 endif
 
 .PHONY: test
-test:
+test: ## Запустить все тесты
 	$(GO) test ./...
 
 .PHONY: clean
-clean:
+clean: ## Удалить bin/, dist/ и build-каталог llama.cpp
 ifeq ($(IS_UNIX),1)
 	rm -rf bin/ $(LLAMA_BUILD) dist/
 else
@@ -135,11 +152,11 @@ else
 endif
 
 .PHONY: gen-man
-gen-man:
+gen-man: ## Сгенерировать man-страницы
 	$(GO) run ./cmd/genman
 
 .PHONY: dist-deb
-dist-deb: build-linux gen-man
+dist-deb: build-linux gen-man ## Собрать .deb пакет
 ifeq ($(IS_UNIX),1)
 	@if command -v dpkg-deb >/dev/null 2>&1; then \
 		mkdir -p dist/deb/usr/bin; \
@@ -165,7 +182,7 @@ else
 endif
 
 .PHONY: dist-rpm
-dist-rpm: build-linux gen-man
+dist-rpm: build-linux gen-man ## Собрать .rpm пакет
 ifeq ($(IS_UNIX),1)
 	@if command -v rpmbuild >/dev/null 2>&1; then \
 		mkdir -p dist/rpmbuild/BUILD dist/rpmbuild/RPMS dist/rpmbuild/SOURCES dist/rpmbuild/SPECS dist/rpmbuild/SRPMS; \
@@ -198,7 +215,7 @@ else
 endif
 
 .PHONY: dist-macos
-dist-macos: build-macos gen-man
+dist-macos: build-macos gen-man ## Собрать tar.gz для macOS
 ifeq ($(IS_UNIX),1)
 	# Package for amd64
 	mkdir -p dist/macos-amd64/bin dist/macos-amd64/share/man/man1
@@ -219,7 +236,7 @@ else
 endif
 
 .PHONY: dist-freebsd
-dist-freebsd: build-freebsd gen-man
+dist-freebsd: build-freebsd gen-man ## Собрать tar.gz для FreeBSD
 ifeq ($(IS_UNIX),1)
 	mkdir -p dist/freebsd-amd64/bin dist/freebsd-amd64/share/man/man1
 	cp bin/nlsh-freebsd-amd64 dist/freebsd-amd64/bin/nlsh
@@ -233,7 +250,7 @@ else
 endif
 
 .PHONY: dist-linux-tar
-dist-linux-tar: build-linux gen-man
+dist-linux-tar: build-linux gen-man ## Собрать tar.gz для Linux
 ifeq ($(IS_UNIX),1)
 	mkdir -p dist/linux-amd64/bin dist/linux-amd64/share/man/man1
 	cp bin/nlsh-linux-amd64 dist/linux-amd64/bin/nlsh
@@ -246,8 +263,19 @@ else
 	@echo "Linux tarball packaging is only supported on Unix."
 endif
 
+.PHONY: dist-arch
+dist-arch: ## Собрать и установить пакет для Arch Linux (makepkg -si)
+	@if command -v makepkg >/dev/null 2>&1; then \
+		mkdir -p dist/arch; \
+		sed 's|git+https://github.com/dedomorozoff/nlsh.git#tag=v1.0.0|git+file://$(CURDIR)#commit=$(shell git rev-parse HEAD)|' PKGBUILD > dist/arch/PKGBUILD; \
+		cd dist/arch && makepkg -si; \
+		echo "Пакет собран: $(CURDIR)/dist/arch/nlsh-*.pkg.tar.zst"; \
+	else \
+		echo "makepkg not found. Install base-devel: sudo pacman -S base-devel"; \
+	fi
+
 .PHONY: dist-windows
-dist-windows: build-windows
+dist-windows: build-windows ## Собрать .zip для Windows
 ifeq ($(IS_UNIX),1)
 	# Package as zip
 	mkdir -p dist/windows-amd64
@@ -270,7 +298,7 @@ else
 endif
 
 .PHONY: dist-windows-bundle
-dist-windows-bundle: build-windows
+dist-windows-bundle: build-windows ## Собрать Windows-инсталлятор (Inno Setup)
 ifeq ($(IS_UNIX),1)
 	@echo "Bundle installer requires Windows. Use: powershell -Command '.\build-bundle.ps1' && iscc installer-bundle.iss"
 else
@@ -279,4 +307,4 @@ else
 endif
 
 .PHONY: dist-all
-dist-all: dist-deb dist-rpm dist-linux-tar dist-macos dist-freebsd dist-windows
+dist-all: dist-deb dist-rpm dist-linux-tar dist-macos dist-freebsd dist-windows ## Собрать все дистрибутивы
