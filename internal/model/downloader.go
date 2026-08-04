@@ -53,9 +53,9 @@ type ModelInfo struct {
 
 var RecommendedModels = []ModelInfo{
 	{
-		Name:        "Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf",
-		URL:         "https://huggingface.co/Jackrong/Qwopus3.5-9B-Coder-GGUF/resolve/main/Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf",
-		SizeMB:      4260,
+		Name:        "Qwopus3.5-9B-coder-Exp-Q3_K_M.gguf",
+		URL:         "https://huggingface.co/Jackrong/Qwopus3.5-9B-Coder-GGUF/resolve/main/Qwopus3.5-9B-coder-Exp-Q3_K_M.gguf",
+		SizeMB:      4409,
 		Description: "Qwopus3.5 9B Coder — лучшее качество, 3-bit квантование (рекомендуемая)",
 		MinRAM:      6,
 	},
@@ -67,46 +67,53 @@ var RecommendedModels = []ModelInfo{
 		MinRAM:      8,
 	},
 	{
-		Name:        "Qwopus3.5-9B-coder-Exp-Q2_K.gguf",
-		URL:         "https://huggingface.co/Jackrong/Qwopus3.5-9B-Coder-GGUF/resolve/main/Qwopus3.5-9B-coder-Exp-Q2_K.gguf",
-		SizeMB:      3830,
-		Description: "Qwopus3.5 9B Coder — 2-bit квантование (для слабых машин, ниже качество)",
-		MinRAM:      4,
+		Name:        "Qwopus3.5-9B-coder-Exp-Q5_K_M.gguf",
+		URL:         "https://huggingface.co/Jackrong/Qwopus3.5-9B-Coder-GGUF/resolve/main/Qwopus3.5-9B-coder-Exp-Q5_K_M.gguf",
+		SizeMB:      6168,
+		Description: "Qwopus3.5 9B Coder — 5-bit квантование (высокое качество, нужно 10+ ГБ RAM)",
+		MinRAM:      10,
 	},
 	{
 		Name:        "Qwen3-4B-Q4_K_M.gguf",
 		URL:         "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
-		SizeMB:      2500,
+		SizeMB:      2382,
 		Description: "Qwen3 4B — компактная, хорошее соотношение размер/качество",
 		MinRAM:      4,
 	},
 	{
-		Name:        "Qwen3-1.7B-Q4_K_M.gguf",
-		URL:         "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
-		SizeMB:      1000,
+		Name:        "Qwen3-1.7B-Q8_0.gguf",
+		URL:         "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf",
+		SizeMB:      1749,
 		Description: "Qwen3 1.7B — для слабых машин",
 		MinRAM:      2,
 	},
 	{
 		Name:        "Qwen3-8B-Q4_K_M.gguf",
 		URL:         "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
-		SizeMB:      5000,
+		SizeMB:      4795,
 		Description: "Qwen3 8B — максимальное качество (нужно 8+ ГБ RAM)",
 		MinRAM:      8,
 	},
 	{
 		Name:        "qwen2.5-1.5b-instruct-q4_k_m.gguf",
 		URL:         "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-		SizeMB:      981,
+		SizeMB:      1066,
 		Description: "Qwen2.5 1.5B — предыдущее поколение",
 		MinRAM:      2,
 	},
 	{
 		Name:        "llama3.2-1b-instruct-q4_k_m.gguf",
 		URL:         "https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-		SizeMB:      647,
+		SizeMB:      770,
 		Description: "Llama 3.2 1B — от Meta",
 		MinRAM:      2,
+	},
+	{
+		Name:        "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+		URL:         "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+		SizeMB:      469,
+		Description: "Qwen2.5 0.5B — самая маленькая, для тестов (по умолчанию)",
+		MinRAM:      1,
 	},
 }
 
@@ -275,10 +282,11 @@ func detectLinuxRAM() int {
 	return 8
 }
 
+var DefaultModelName = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+
 func RecommendModel() ModelInfo {
-	ram := DetectRAMGB()
 	for _, m := range RecommendedModels {
-		if m.MinRAM <= ram {
+		if m.Name == DefaultModelName {
 			return m
 		}
 	}

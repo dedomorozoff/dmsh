@@ -12,8 +12,8 @@ if (-not $ProjectRoot) {
 Write-Host "=== nlsh Windows Bundle Build ===" -ForegroundColor Cyan
 
 # Model to bundle (recommended model)
-$ModelName = "Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf"
-$ModelURL = "https://huggingface.co/Jackrong/Qwopus3.5-9B-Coder-GGUF/resolve/main/Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf"
+$ModelName = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+$ModelURL = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 $BundleDir = "$ProjectRoot\bundle"
 
 # 1. Build nlsh.exe if not exists
@@ -31,7 +31,7 @@ if (-not (Test-Path "$ProjectRoot\bin\nlsh.exe")) {
 
 # 2. Download model if not exists
 if (-not (Test-Path "$BundleDir\$ModelName")) {
-    Write-Host "[2/3] Downloading model: $ModelName (~4.3 GB)..." -ForegroundColor Yellow
+    Write-Host "[2/3] Downloading model: $ModelName (~0.5 GB)..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Path $BundleDir -Force | Out-Null
 
     $req = [System.Net.HttpWebRequest]::Create($ModelURL)

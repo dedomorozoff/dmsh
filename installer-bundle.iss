@@ -13,13 +13,13 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 ChangesEnvironment=yes
 PrivilegesRequired=lowest
-ExtraDiskSpaceRequired=4500000000
+ExtraDiskSpaceRequired=700000000
 
 [Files]
 ; Main executable
 Source: "bin\nlsh.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Bundled model (will be moved to user config dir during install)
-Source: "bundle\Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf"; DestDir: "{app}"; Flags: ignoreversion
+Source: "bundle\qwen2.5-0.5b-instruct-q4_k_m.gguf"; DestDir: "{app}"; Flags: ignoreversion
 ; MinGW runtime DLLs
 Source: "bundle\libstdc++-6.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "bundle\libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
@@ -34,7 +34,7 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 
 [Run]
 ; Configure bundled model as default
-Filename: "{app}\nlsh.exe"; Parameters: "model use Qwopus3.5-9B-coder-Exp-Q3_K_S"; Description: "Configure bundled model as default"; Flags: postinstall waituntilterminated runhidden
+Filename: "{app}\nlsh.exe"; Parameters: "model use qwen2.5-0.5b-instruct-q4_k_m"; Description: "Configure bundled model as default"; Flags: postinstall waituntilterminated runhidden
 
 [Code]
 function NotOnPathYet(): Boolean;
@@ -58,9 +58,9 @@ begin
   if CurStep = ssPostInstall then
   begin
     // Move bundled model to user's config directory
-    ModelSource := ExpandConstant('{app}\Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf');
+    ModelSource := ExpandConstant('{app}\qwen2.5-0.5b-instruct-q4_k_m.gguf');
     ConfigDir := ExpandConstant('{userappdata}') + '\nlsh\models';
-    ModelDest := ConfigDir + '\Qwopus3.5-9B-coder-Exp-Q3_K_S.gguf';
+    ModelDest := ConfigDir + '\qwen2.5-0.5b-instruct-q4_k_m.gguf';
 
     if not DirExists(ConfigDir) then
       ForceDirectories(ConfigDir);
