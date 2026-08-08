@@ -20,6 +20,8 @@ prepare() {
 
 build() {
   cd "$srcdir/$pkgname"
+  # makepkg exports system LDFLAGS (e.g. -Wl,-flto) which the Go linker does not understand.
+  unset LDFLAGS
   make build
 }
 
