@@ -125,4 +125,3 @@ func splitCommand(s string) []string {
 	flush()
 	return out
 }
-

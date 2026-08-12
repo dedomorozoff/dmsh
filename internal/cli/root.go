@@ -18,10 +18,10 @@ func NewRootCmd() *cobra.Command {
 	rf := &rootFlags{cfg: cfg}
 
 	cmd := &cobra.Command{
-		Use:           "nlsh [query]",
-		Short:         "Natural Language Shell — talk to your system naturally",
-		Long:          "nlsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device inference — no cloud, no HTTP server.",
-		Args:          cobra.ArbitraryArgs,
+		Use:   "nlsh [query]",
+		Short: "Natural Language Shell — talk to your system naturally",
+		Long:  "nlsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device inference — no cloud, no HTTP server.",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return runInteractive(cmd, rf)

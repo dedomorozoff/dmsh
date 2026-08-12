@@ -10,7 +10,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/chzyer/readline"
@@ -176,8 +175,8 @@ func newReplCmd(rf *rootFlags) *cobra.Command {
 			out := cmd.OutOrStdout()
 			in := cmd.InOrStdin()
 
-		banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
-			bold, cyan, reset, green, reset, gray, reset)
+			banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
+				bold, cyan, reset, green, reset, gray, reset)
 			fmt.Fprint(out, banner)
 
 			ctx := cmd.Context()
@@ -210,7 +209,7 @@ func replLoop(ctx context.Context, s *session, rf *rootFlags, in io.Reader, out,
 		promptStr := buildPrompt(usr.Username, hostname, cwd, string(s.cfg.Mode), isTTY)
 
 		fmt.Fprint(out, promptStr)
-		fmt.Fprint(out, " ")  // space after prompt
+		fmt.Fprint(out, " ") // space after prompt
 		flushOutput(out)
 
 		if !scanner.Scan() {
@@ -252,9 +251,10 @@ func buildPrompt(username, hostname, cwd, mode string, isTTY bool) string {
 		modeLabel = mode
 	}
 	modeColor := green
-	if modeLabel == "help" {
+	switch modeLabel {
+	case "help":
 		modeColor = yellow
-	} else if modeLabel == "shell" {
+	case "shell":
 		modeColor = cyan
 	}
 	return fmt.Sprintf("%s[%s] %s%s%s> %s", gray, short, modeColor, modeLabel, reset, reset)
@@ -783,43 +783,6 @@ func looksLikeShellCommand(input string) bool {
 		return true
 	}
 	return false
-}
-
-// spin — простой спиннер, работающий в горутине, пока не будет остановлен.
-type spin struct {
-	stopCh chan struct{}
-	wg     sync.WaitGroup
-}
-
-func startSpin(w io.Writer) *spin {
-	s := &spin{stopCh: make(chan struct{})}
-	frames := []string{"\U0001f311", "\U0001f312", "\U0001f313", "\U0001f314", "\U0001f315", "\U0001f316", "\U0001f317", "\U0001f318"}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		i := 0
-		ticker := time.NewTicker(120 * time.Millisecond)
-		defer ticker.Stop()
-		fmt.Fprintf(w, "  \U0001f4ad") // initial
-		for {
-			select {
-			case <-ticker.C:
-				fmt.Fprintf(w, "\r\033[K%s", frames[i%len(frames)])
-				flushOutput(w)
-				i++
-			case <-s.stopCh:
-				fmt.Fprintf(w, "\r\033[K")
-				flushOutput(w)
-				return
-			}
-		}
-	}()
-	return s
-}
-
-func (s *spin) stop() {
-	close(s.stopCh)
-	s.wg.Wait()
 }
 
 // askWithFollowUp вызывает модель и, если в ответе есть question, задаёт его

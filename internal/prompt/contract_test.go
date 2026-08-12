@@ -102,4 +102,3 @@ func TestParse_FallbackParser(t *testing.T) {
 		t.Fatalf("unexpected parsed values: %+v", r2)
 	}
 }
-

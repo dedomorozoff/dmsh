@@ -12,7 +12,7 @@ import (
 
 type Downloader struct {
 	modelDir string
-	client  *http.Client
+	client   *http.Client
 }
 
 func New(modelDir string) *Downloader {
@@ -165,7 +165,7 @@ func (d *Downloader) DownloadURL(url string, progress func(dl int, total int)) (
 
 	tmpPath := destPath + ".tmp"
 	if err := d.downloadFile(url, tmpPath, progress); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("download %s: %w", name, err)
 	}
 
@@ -188,7 +188,7 @@ func (d *Downloader) Download(info ModelInfo, progress func(dl int, total int)) 
 
 	tmpPath := destPath + ".tmp"
 	if err := d.downloadFile(info.URL, tmpPath, progress); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("download %s: %w", info.Name, err)
 	}
 
@@ -204,7 +204,7 @@ func (d *Downloader) downloadFile(url, destPath string, progress func(dl, total 
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 302 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -217,18 +217,18 @@ func (d *Downloader) downloadFile(url, destPath string, progress func(dl, total 
 			if err != nil {
 				return fmt.Errorf("GET redirect: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 		}
 	}
 
 	finalURL := resp.Request.URL.String()
 	if finalURL != url && strings.HasPrefix(finalURL, "https://") {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		resp, err = d.client.Get(finalURL)
 		if err != nil {
 			return fmt.Errorf("GET final: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 
 	contentLen := int(resp.ContentLength)
@@ -240,7 +240,7 @@ func (d *Downloader) downloadFile(url, destPath string, progress func(dl, total 
 	if err != nil {
 		return fmt.Errorf("create %s: %w", destPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	buf := make([]byte, 32*1024)
 	var downloaded int

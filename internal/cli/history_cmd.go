@@ -49,11 +49,11 @@ func newHistoryCmd() *cobra.Command {
 			}
 
 			if len(entries) == 0 {
-				fmt.Fprintln(out, "No history found.")
+				_, _ = fmt.Fprintln(out, "No history found.")
 				return nil
 			}
 
-			fmt.Fprintln(out, "=== Command History ===")
+			_, _ = fmt.Fprintln(out, "=== Command History ===")
 			for i, e := range entries {
 				tStr := e.Timestamp.Format("2006-01-02 15:04:05")
 				fmt.Fprintf(out, "%4d  [%s] (%-6s)  %s\n", i+1, tStr, e.Source, e.Command)
@@ -79,7 +79,7 @@ func loadHistoryEntries(filepath string) ([]HistoryEntry, error) {
 		}
 		return nil, fmt.Errorf("open history file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var entries []HistoryEntry
 	scanner := bufio.NewScanner(f)

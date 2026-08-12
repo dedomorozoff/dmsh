@@ -97,4 +97,3 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	}
 	return nil
 }
-

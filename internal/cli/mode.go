@@ -9,8 +9,8 @@ import (
 
 // ModeSwitcher управляет переключением режимов в REPL.
 type ModeSwitcher struct {
-	cfg   *config.Config
-	out   io.Writer
+	cfg *config.Config
+	out io.Writer
 }
 
 // NewModeSwitcher создаёт новый переключатель режимов.

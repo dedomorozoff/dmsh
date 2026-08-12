@@ -181,6 +181,7 @@ func extractAllJSONObjects(s string) []string {
 		inString := false
 		escaped := false
 		end := -1
+	loop:
 		for i := 0; i < len(s); i++ {
 			c := s[i]
 			if inString {
@@ -206,7 +207,7 @@ func extractAllJSONObjects(s string) []string {
 				depth--
 				if depth == 0 {
 					end = i + 1
-					break
+					break loop
 				}
 			}
 		}

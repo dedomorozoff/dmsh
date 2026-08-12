@@ -24,7 +24,7 @@ func newConfigCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
+out := cmd.OutOrStdout()
 			fmt.Fprintln(out, "=== Current Configuration ===")
 			fmt.Fprintf(out, "  %-20s %v\n", "model_path:", cfg.ModelPath)
 			fmt.Fprintf(out, "  %-20s %v\n", "default_model:", cfg.DefaultModel)

@@ -14,13 +14,13 @@ type Turn struct {
 
 // Context — это окружение, которое мы инжектим в системный промпт.
 type Context struct {
-	OS           string
-	OSVersion    string
-	BuildInfo    string
-	Shell        string
-	CWD          string
-	RecentCmds   []string
-	UserRequest  string
+	OS          string
+	OSVersion   string
+	BuildInfo   string
+	Shell       string
+	CWD         string
+	RecentCmds  []string
+	UserRequest string
 	// Mode задаёт ожидаемый intent: ask -> только explain/ask_clarification,
 	// run -> предпочтительно run_command. Пусто = без ограничения.
 	Mode string
@@ -121,7 +121,7 @@ func BuildSystem(ctx Context) string {
 	} else {
 		b.WriteString("\n" + unixSpecifics)
 	}
-	
+
 	b.WriteString("\nEnvironment:\n")
 	fmt.Fprintf(&b, "- OS: %s\n", targetOS)
 	if ctx.OSVersion != "" {
