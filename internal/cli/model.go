@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -113,7 +114,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 				errMsg := fmt.Sprintf("model %q not found in the list.\n", target)
 				errMsg += "  Use: nlsh model list\n"
 				errMsg += "  Or provide a direct URL to a .gguf file"
-				return fmt.Errorf(errMsg)
+				return errors.New(errMsg)
 			}
 
 			if d.Exists(info.Name) {
@@ -183,7 +184,7 @@ func newWizardIO(in io.Reader, out io.Writer) *wizardIO {
 }
 
 func (w *wizardIO) ask(prompt string) (string, error) {
-	fmt.Fprint(w.out, prompt)
+	_, _ = fmt.Fprint(w.out, prompt)
 	flushOutput(w.out)
 	if !w.sc.Scan() {
 		if err := w.sc.Err(); err != nil {
@@ -194,15 +195,15 @@ func (w *wizardIO) ask(prompt string) (string, error) {
 	return strings.TrimSpace(w.sc.Text()), nil
 }
 
-// runModelWizard интерактивно предлагает выбрать модель для скачивания
-// и установить её по умолчанию.
+// runModelWizard interactively suggests choosing a model to download
+// and set it as default.
 func runModelWizard(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	in := newWizardIO(cmd.InOrStdin(), out)
 	d := model.New("")
 	hw := config.DetectHardware()
 
-	fmt.Fprintln(out, "=== Рекомендуемые модели ===")
+	fmt.Fprintln(out, "=== Recommended Models ===")
 	for i, m := range model.RecommendedModels {
 		status := "[ ]"
 		if d.Exists(m.Name) {
@@ -210,18 +211,18 @@ func runModelWizard(cmd *cobra.Command) error {
 		}
 		fmt.Fprintf(out, "  %2d. %s %s (%d MB)\n      %s\n", i+1, status, m.Name, m.SizeMB, m.Description)
 		if hw.RAMGB > 0 && m.MinRAM > hw.RAMGB {
-			fmt.Fprintf(out, "      (нужно %d ГБ RAM, у тебя %d)\n", m.MinRAM, hw.RAMGB)
+			fmt.Fprintf(out, "      (requires %d GB RAM, you have %d)\n", m.MinRAM, hw.RAMGB)
 		}
 	}
 	fmt.Fprintln(out)
 
-	pick, err := in.ask("Какую модель скачать? (номер или имя, Enter — отмена): ")
+	pick, err := in.ask("Which model to download? (number or name, Enter to cancel): ")
 	if err != nil {
 		return nil
 	}
 	pick = strings.TrimSpace(pick)
 	if pick == "" {
-		fmt.Fprintln(out, "(отменено)")
+		fmt.Fprintln(out, "(cancelled)")
 		return nil
 	}
 
@@ -240,21 +241,21 @@ func runModelWizard(cmd *cobra.Command) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("модель %q не найдена в списке", pick)
+		return fmt.Errorf("model %q not found in the list", pick)
 	}
 
 	if d.Exists(info.Name) {
-		fmt.Fprintf(out, "Модель %s уже скачана\n", info.Name)
+		fmt.Fprintf(out, "Model %s already downloaded\n", info.Name)
 	} else {
-		fmt.Fprintf(out, "Скачиваю %s (%d MB)...\n", info.Name, info.SizeMB)
+		fmt.Fprintf(out, "Downloading %s (%d MB)...\n", info.Name, info.SizeMB)
 		path, err := d.Download(info, progressFn(out))
 		if err != nil {
-			return fmt.Errorf("ошибка скачивания: %w", err)
+			return fmt.Errorf("download failed: %w", err)
 		}
-		fmt.Fprintf(out, "\n\nГотово: %s\n", path)
+		fmt.Fprintf(out, "\n\nDone: %s\n", path)
 	}
 
-	answer, err := in.ask("Сделать её моделью по умолчанию? [y/N]: ")
+	answer, err := in.ask("Set it as default model? [y/N]: ")
 	if err != nil {
 		return nil
 	}
@@ -262,7 +263,7 @@ func runModelWizard(cmd *cobra.Command) error {
 	if answer == "y" || answer == "yes" {
 		setDefault(cmd, info.Name)
 	} else {
-		fmt.Fprintln(out, "(текущая модель по умолчанию осталась)")
+		fmt.Fprintln(out, "(current default model unchanged)")
 	}
 	return nil
 }

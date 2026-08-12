@@ -25,7 +25,7 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	if err != nil {
 		fmt.Fprintln(errOut, "")
 		fmt.Fprintf(errOut, "  ✗ Model error: %v\n", err)
-		fmt.Fprintln(errOut, "  → Run: nlsh model download")
+		fmt.Fprintln(errOut, "  → Run: nlsh model")
 		fmt.Fprintln(errOut, "")
 		return err
 	}

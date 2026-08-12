@@ -25,11 +25,11 @@ type HistoryEntry struct {
 
 // SessionStats — статистика текущей сессии.
 type SessionStats struct {
-	StartTime    time.Time
-	Requests     int
-	CommandsLLM  int
+	StartTime      time.Time
+	Requests       int
+	CommandsLLM    int
 	CommandsDirect int
-	ErrorsFix    int
+	ErrorsFix      int
 }
 
 // session инкапсулирует движок и собранный для него контекст промпта.
@@ -41,9 +41,9 @@ type session struct {
 	hist      []HistoryEntry
 	input     LineReader
 	stats     SessionStats
-	lastInput string          // последний запрос пользователя (для /retry)
-	turns     []prompt.Turn   // последние 5 пар диалога
-	stdinCtx  string          // данные из stdin pipe
+	lastInput string        // последний запрос пользователя (для /retry)
+	turns     []prompt.Turn // последние 5 пар диалога
+	stdinCtx  string        // данные из stdin pipe
 }
 
 func newSession(cfg config.Config) (*session, error) {
@@ -98,7 +98,7 @@ func resolveModelPath(cfg config.Config) (string, error) {
 		return d.ModelPath(all[0].Name), nil
 	}
 
-	return "", errors.New("model not found, run: nlsh model download")
+	return "", errors.New("model not found, run: nlsh model")
 }
 
 func (s *session) close() {
@@ -132,7 +132,7 @@ func (s *session) saveHistory() error {
 	if err != nil {
 		return fmt.Errorf("open history file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	for _, entry := range hist {
 		data, _ := json.Marshal(entry)
@@ -148,61 +148,6 @@ func (s *session) addHistory(cmd, source string) {
 		Command:   cmd,
 		Source:    source,
 	})
-}
-
-// ask отправляет запрос модели и пытается вытащить из ответа Response.
-// Один retry в случае невалидного JSON: добавляем repair-инструкцию.
-func (s *session) ask(ctx context.Context, mode, userInput string) (prompt.Response, string, error) {
-	s.stats.Requests++
-	s.lastInput = userInput
-	cwd, _ := os.Getwd()
-	pctx := prompt.Context{
-		OS:           osName(),
-		OSVersion:    osVersion(),
-		BuildInfo:    buildInfo(),
-		Shell:        s.cfg.Shell,
-		CWD:          cwd,
-		RecentCmds:   s.recent,
-		UserRequest: userInput,
-		Mode:         string(s.cfg.Mode),
-		StdinContext: s.stdinCtx,
-		RecentTurns: s.turns,
-	}
-	system := prompt.BuildSystem(pctx)
-	user := prompt.BuildUser(pctx)
-
-	opts := llm.SamplingOptions{
-		MaxTokens:   s.cfg.MaxTokens,
-		Temperature: s.cfg.Temperature,
-		TopP:        s.cfg.TopP,
-		StopTokens:  []string{"<|im_end|>", "</s>"},
-	}
-
-	raw, err := s.engine.Generate(ctx, system, user, opts)
-	if err != nil {
-		return prompt.Response{}, raw, err
-	}
-	resp, perr := prompt.Parse(raw)
-	if perr == nil {
-		// Сохраняем пару диалога
-		asst := resp.Command
-		if asst == "" {
-			asst = resp.Explanation
-		}
-		s.addTurn(userInput, asst)
-		return resp, raw, nil
-	}
-
-	repair := user + "\n\nPrevious response was not valid JSON. Return strictly a single JSON object matching the schema, with no text around it."
-	raw2, err := s.engine.Generate(ctx, system, repair, opts)
-	if err != nil {
-		return prompt.Response{}, raw, err
-	}
-	resp2, perr2 := prompt.Parse(raw2)
-	if perr2 != nil {
-		return prompt.Response{}, raw + "\n---\n" + raw2, fmt.Errorf("failed to parse model response: %w", perr2)
-	}
-	return resp2, raw2, nil
 }
 
 func (s *session) addRecent(cmd string) {
@@ -249,7 +194,7 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 		RecentCmds:   s.recent,
 		UserRequest:  userInput,
 		Mode:         string(s.cfg.Mode),
-		StdinContext:  s.stdinCtx,
+		StdinContext: s.stdinCtx,
 		RecentTurns:  s.turns,
 	}
 	system := prompt.BuildSystem(pctx)
