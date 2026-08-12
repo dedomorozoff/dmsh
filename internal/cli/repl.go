@@ -339,33 +339,10 @@ func replLoopReadline(ctx context.Context, s *session, rf *rootFlags, out, errW 
 	})
 
 	// Filter input for special keys
-	ms := NewModeSwitcher(&s.cfg, out)
-	altEsc := false // tracks if last rune was ESC (for Alt+key detection)
 	rlConfig.FuncFilterInputRune = func(r rune) (rune, bool) {
 		// Ctrl+L (0x0c) - clear screen
 		if r == 0x0c {
 			clearScreen(out)
-			return 0, false
-		}
-		// Alt+1/2/3 detection: terminals send ESC + key for Alt combos
-		if altEsc {
-			altEsc = false
-			switch r {
-			case '1', 'i', 'I', 'a', 'A':
-				ms.Switch(config.ModeAI)
-				return 0, false
-			case '2', 'h', 'H':
-				ms.Switch(config.ModeHelp)
-				return 0, false
-			case '3', 's', 'S':
-				ms.Switch(config.ModeShell)
-				return 0, false
-			}
-			// ESC followed by something else, pass through
-			return r, true
-		}
-		if r == 0x1b { // ESC
-			altEsc = true
 			return 0, false
 		}
 		return r, true
@@ -600,9 +577,9 @@ func showKeyBindings(out io.Writer) {
 	fmt.Fprintf(out, "  %sAlt+D%s      — delete forward one word\n", yellow, reset)
 	fmt.Fprintf(out, "  %sCtrl+W%s     — delete backward one word\n", yellow, reset)
 	fmt.Fprintf(out, "\n%sModes (shortcuts):%s\n", bold, reset)
-	fmt.Fprintf(out, "  %sAlt+1%s or %s/1%s or %s/mode 1%s      — AI mode (auto-execute)\n", yellow, reset, yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %sAlt+2%s or %s/2%s or %s/mode 2%s      — Help mode (command + explanation)\n", yellow, reset, yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %sAlt+3%s or %s/3%s or %s/mode 3%s      — Shell mode (direct execution)\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/1%s or %s/mode 1%s            — AI mode (auto-execute)\n", yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/2%s or %s/mode 2%s            — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/3%s or %s/mode 3%s            — Shell mode (direct execution)\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "\n%sSpecial:%s\n", bold, reset)
 	fmt.Fprintf(out, "  %s/exit%s      — exit REPL\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/cd%s path   — change directory\n", yellow, reset)
@@ -649,9 +626,9 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %sCtrl+W%s     — delete word back  %sAlt+D%s    — delete word forward\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %sCtrl+L%s     — clear screen      %s/exit%s      — exit\n\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "%sModes (shortcuts):%s\n", bold, reset)
-	fmt.Fprintf(out, "  %sAlt+1%s or %s/1%s or %s/mode 1%s      — AI mode (auto-execute)\n", yellow, reset, yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %sAlt+2%s or %s/2%s or %s/mode 2%s      — Help mode (command + explanation)\n", yellow, reset, yellow, reset, yellow, reset)
-	fmt.Fprintf(out, "  %sAlt+3%s or %s/3%s or %s/mode 3%s      — Shell mode (direct execution)\n\n", yellow, reset, yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/1%s or %s/mode 1%s            — AI mode (auto-execute)\n", yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/2%s or %s/mode 2%s            — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
+	fmt.Fprintf(out, "  %s/3%s or %s/mode 3%s            — Shell mode (direct execution)\n\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "%sExamples:%s\n  show all txt files\n  find errors in logs\n  start docker\n\n", bold, reset)
 	fmt.Fprintf(out, "%s Default: %sdry-run=false%s (commands execute).\n  Use --dry-run to enable safe mode.\n\n", bold, green, reset)
 }

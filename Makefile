@@ -1,5 +1,45 @@
 # Detect environment: Unix (Linux/macOS/Cygwin) vs Windows native (choco make)
 UNAME_S := $(shell uname -s 2>/dev/null)
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help:
+	@echo "nlsh — Natural Language Shell"
+	@echo ""
+	@echo "Build targets:"
+	@echo "  build             Build with llama.cpp (CGO) — bin/nlsh"
+	@echo "  build-stub        Build without llama.cpp (stub)"
+	@echo "  llama / llama-prepare  Build llama.cpp C library"
+	@echo "  build-all         Build for all platforms"
+	@echo ""
+	@echo "Platform-specific builds:"
+	@echo "  build-windows     Build Windows binary"
+	@echo "  build-linux       Build Linux binary"
+	@echo "  build-macos       Build macOS binary (amd64 + arm64)"
+	@echo "  build-freebsd     Build FreeBSD binary"
+	@echo ""
+	@echo "Distribution packages:"
+	@echo "  dist-deb          Build .deb package"
+	@echo "  dist-rpm          Build .rpm package"
+	@echo "  dist-linux-tar    Build Linux tarball"
+	@echo "  dist-macos        Build macOS tarballs"
+	@echo "  dist-freebsd      Build FreeBSD tarball"
+	@echo "  dist-windows      Build Windows zip"
+	@echo "  dist-windows-bundle  Build Windows bundle installer"
+	@echo "  dist-all          Build all distribution packages"
+	@echo ""
+	@echo "Other:"
+	@echo "  test              Run tests (go test ./...)"
+	@echo "  clean             Remove build artifacts"
+	@echo "  gen-man           Generate man pages"
+	@echo ""
+	@echo "Options:"
+	@echo "  GPU=cuda|metal|vulkan  Enable GPU acceleration"
+	@echo "  LLAMA_JOBS=N           Parallel build jobs (default: 2)"
+	@echo ""
+
+UNAME_S := $(shell uname -s 2>/dev/null)
 IS_UNIX := $(if $(or $(findstring Linux,$(UNAME_S)),$(findstring Darwin,$(UNAME_S)),$(findstring CYGWIN,$(UNAME_S)),$(findstring MSYS,$(UNAME_S))),1,)
 
 LLAMA_DIR := third_party/llama.cpp
@@ -7,7 +47,7 @@ LLAMA_BUILD := $(LLAMA_DIR)/build
 
 GO := go
 GOFLAGS ?=
-LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(shell git describe --always --dirty 2>/dev/null || echo dev)
+LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0

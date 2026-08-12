@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,12 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 		Use:   "model",
 		Short: "Model management",
 		Long:  "Download or select a model for nlsh",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return cmd.Help()
+			}
+			return runModelWizard(cmd)
+		},
 	}
 
 	cmd.AddCommand(&cobra.Command{
@@ -160,6 +167,104 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 	})
 
 	return cmd
+}
+
+// wizardIO читает ответы из одного сканера, чтобы несколько вопросов подряд
+// корректно работали и с pipe, и с терминалом.
+type wizardIO struct {
+	sc  *bufio.Scanner
+	out io.Writer
+}
+
+func newWizardIO(in io.Reader, out io.Writer) *wizardIO {
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	return &wizardIO{sc: sc, out: out}
+}
+
+func (w *wizardIO) ask(prompt string) (string, error) {
+	fmt.Fprint(w.out, prompt)
+	flushOutput(w.out)
+	if !w.sc.Scan() {
+		if err := w.sc.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	return strings.TrimSpace(w.sc.Text()), nil
+}
+
+// runModelWizard интерактивно предлагает выбрать модель для скачивания
+// и установить её по умолчанию.
+func runModelWizard(cmd *cobra.Command) error {
+	out := cmd.OutOrStdout()
+	in := newWizardIO(cmd.InOrStdin(), out)
+	d := model.New("")
+	hw := config.DetectHardware()
+
+	fmt.Fprintln(out, "=== Рекомендуемые модели ===")
+	for i, m := range model.RecommendedModels {
+		status := "[ ]"
+		if d.Exists(m.Name) {
+			status = "[*]"
+		}
+		fmt.Fprintf(out, "  %2d. %s %s (%d MB)\n      %s\n", i+1, status, m.Name, m.SizeMB, m.Description)
+		if hw.RAMGB > 0 && m.MinRAM > hw.RAMGB {
+			fmt.Fprintf(out, "      (нужно %d ГБ RAM, у тебя %d)\n", m.MinRAM, hw.RAMGB)
+		}
+	}
+	fmt.Fprintln(out)
+
+	pick, err := in.ask("Какую модель скачать? (номер или имя, Enter — отмена): ")
+	if err != nil {
+		return nil
+	}
+	pick = strings.TrimSpace(pick)
+	if pick == "" {
+		fmt.Fprintln(out, "(отменено)")
+		return nil
+	}
+
+	var info model.ModelInfo
+	found := false
+	if num, err := strconv.Atoi(pick); err == nil && num > 0 && num <= len(model.RecommendedModels) {
+		info = model.RecommendedModels[num-1]
+		found = true
+	} else {
+		for _, m := range model.RecommendedModels {
+			if m.Name == pick {
+				info = m
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		return fmt.Errorf("модель %q не найдена в списке", pick)
+	}
+
+	if d.Exists(info.Name) {
+		fmt.Fprintf(out, "Модель %s уже скачана\n", info.Name)
+	} else {
+		fmt.Fprintf(out, "Скачиваю %s (%d MB)...\n", info.Name, info.SizeMB)
+		path, err := d.Download(info, progressFn(out))
+		if err != nil {
+			return fmt.Errorf("ошибка скачивания: %w", err)
+		}
+		fmt.Fprintf(out, "\n\nГотово: %s\n", path)
+	}
+
+	answer, err := in.ask("Сделать её моделью по умолчанию? [y/N]: ")
+	if err != nil {
+		return nil
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer == "y" || answer == "yes" {
+		setDefault(cmd, info.Name)
+	} else {
+		fmt.Fprintln(out, "(текущая модель по умолчанию осталась)")
+	}
+	return nil
 }
 
 func downloadURL(cmd *cobra.Command, d *model.Downloader, url string) error {

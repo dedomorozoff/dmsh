@@ -157,12 +157,14 @@ func (s *session) ask(ctx context.Context, mode, userInput string) (prompt.Respo
 	s.lastInput = userInput
 	cwd, _ := os.Getwd()
 	pctx := prompt.Context{
-		OS:          osName(),
-		Shell:       s.cfg.Shell,
-		CWD:         cwd,
-		RecentCmds:  s.recent,
+		OS:           osName(),
+		OSVersion:    osVersion(),
+		BuildInfo:    buildInfo(),
+		Shell:        s.cfg.Shell,
+		CWD:          cwd,
+		RecentCmds:   s.recent,
 		UserRequest: userInput,
-		Mode:        string(s.cfg.Mode),
+		Mode:         string(s.cfg.Mode),
 		StdinContext: s.stdinCtx,
 		RecentTurns: s.turns,
 	}
@@ -240,6 +242,8 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	cwd, _ := os.Getwd()
 	pctx := prompt.Context{
 		OS:           osName(),
+		OSVersion:    osVersion(),
+		BuildInfo:    buildInfo(),
 		Shell:        s.cfg.Shell,
 		CWD:          cwd,
 		RecentCmds:   s.recent,

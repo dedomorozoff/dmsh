@@ -15,6 +15,8 @@ type Turn struct {
 // Context — это окружение, которое мы инжектим в системный промпт.
 type Context struct {
 	OS           string
+	OSVersion    string
+	BuildInfo    string
 	Shell        string
 	CWD          string
 	RecentCmds   []string
@@ -79,6 +81,17 @@ const windowsSpecifics = `Target OS: Windows. Shell: PowerShell.
 Use PowerShell native commands where possible:
 - Files/Dirs: New-Item, Remove-Item, Get-ChildItem, Get-Content, Copy-Item, Move-Item.
 - Processes: Get-Process, Stop-Process.
+- System info (RAM, CPU, OS): Get-CimInstance Win32_OperatingSystem, Get-CimInstance Win32_Processor.
+- Free disk space: Get-PSDrive or Get-Volume.
+- Computer name: hostname or $env:COMPUTERNAME.
+- Folder size: (Get-ChildItem -Recurse <path> | Measure-Object -Property Length -Sum).Sum.
+Do NOT use wmic: it is deprecated and often missing on modern Windows.
+
+Examples of correct Windows commands:
+- Total RAM: Get-CimInstance Win32_ComputerSystem | Select-Object -ExpandProperty TotalPhysicalMemory
+- Free RAM: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory
+- Computer name: hostname
+- Disk free space: Get-PSDrive C
 `
 
 const unixSpecifics = `Target OS: Unix-like (Linux/macOS). Shell: bash/zsh.
@@ -111,6 +124,12 @@ func BuildSystem(ctx Context) string {
 	
 	b.WriteString("\nEnvironment:\n")
 	fmt.Fprintf(&b, "- OS: %s\n", targetOS)
+	if ctx.OSVersion != "" {
+		fmt.Fprintf(&b, "- OS version: %s\n", ctx.OSVersion)
+	}
+	if ctx.BuildInfo != "" {
+		fmt.Fprintf(&b, "- Build: %s\n", ctx.BuildInfo)
+	}
 	fmt.Fprintf(&b, "- Shell: %s\n", coalesce(ctx.Shell, getDefaultShell(targetOS)))
 	if ctx.CWD != "" {
 		fmt.Fprintf(&b, "- CWD: %s\n", ctx.CWD)

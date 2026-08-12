@@ -16,7 +16,6 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	fmt.Fprintln(out, "║          .nlsh — Natural Shell           ║")
 	fmt.Fprintln(out, "║   Type commands in natural language      ║")
 	fmt.Fprintln(out, "║   Example: show me all files             ║")
-	fmt.Fprintln(out, "║   Alt+1=AI  Alt+2=Help  Alt+3=Shell      ║")
 	fmt.Fprintln(out, "║   /stats /retry /export /alias /bind     ║")
 	fmt.Fprintln(out, "║   Type /help for commands.               ║")
 	fmt.Fprintln(out, "╚══════════════════════════════════════════╝")

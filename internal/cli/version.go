@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"runtime"
+	"runtime/debug"
+	"strings"
 
 	"github.com/dedomorozoff/nlsh/internal/config"
 	"github.com/spf13/cobra"
@@ -10,12 +13,43 @@ import (
 // Version is set via -ldflags at build time.
 var Version = "dev"
 
+// displayVersion возвращает человекочитаемую версию.
+// Из git describe ("v0.1.3-48-g2c82189-dirty") оставляем только номер тега.
+func displayVersion() string {
+	v := strings.TrimSpace(Version)
+	if v == "" {
+		return "dev"
+	}
+	if i := strings.IndexByte(v, '-'); i > 0 {
+		v = v[:i]
+	}
+	if v == "" || !strings.HasPrefix(v, "v") {
+		return "dev"
+	}
+	return v
+}
+
+// buildTags возвращает список go build-тегов (например "llama") или "stub".
+func buildTags() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "-tags" && s.Value != "" {
+				return s.Value
+			}
+		}
+	}
+	return "stub"
+}
+
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Show version",
 		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), Version)
+			fmt.Fprintf(cmd.OutOrStdout(), "nlsh %s\n", displayVersion())
+			fmt.Fprintf(cmd.OutOrStdout(), "  Go:       %s\n", runtime.Version())
+			fmt.Fprintf(cmd.OutOrStdout(), "  Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Build:    %s\n", buildTags())
 		},
 	}
 }
@@ -29,6 +63,8 @@ func newInfoCmd() *cobra.Command {
 			cfg, _ := config.Load()
 
 			fmt.Fprintln(cmd.OutOrStdout(), "=== System Information ===")
+			fmt.Fprintf(cmd.OutOrStdout(), "OS:           %s (%s)\n", osName(), osVersion())
+			fmt.Fprintf(cmd.OutOrStdout(), "Build:        %s\n", buildInfo())
 			fmt.Fprintf(cmd.OutOrStdout(), "CPU Cores:    %d\n", hw.CPUCores)
 			fmt.Fprintf(cmd.OutOrStdout(), "RAM:          %d GB\n", hw.RAMGB)
 			fmt.Fprintf(cmd.OutOrStdout(), "GPU:          %s\n", hw.GPUName)
