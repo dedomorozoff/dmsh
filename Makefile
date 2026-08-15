@@ -92,8 +92,8 @@ ifeq ($(IS_UNIX),1)
 	cmake --build $(LLAMA_BUILD) --config Release --parallel $(LLAMA_JOBS)
 else
 	powershell -Command "if (-not (Test-Path 'third_party/llama.cpp/build')) { New-Item -ItemType Directory -Path 'third_party/llama.cpp/build' }"
-	cmake -G "MinGW Makefiles" -S $(LLAMA_DIR) -B $(LLAMA_BUILD) $(CMAKE_FLAGS)
-	cmake --build $(LLAMA_BUILD) --config Release --parallel $(LLAMA_JOBS)
+	PATH="$(MINGW_BIN):$$PATH" cmake -G "MinGW Makefiles" -S $(LLAMA_DIR) -B $(LLAMA_BUILD) $(CMAKE_FLAGS)
+	PATH="$(MINGW_BIN):$$PATH" cmake --build $(LLAMA_BUILD) --config Release --parallel $(LLAMA_JOBS)
 endif
 
 llama: llama-prepare
