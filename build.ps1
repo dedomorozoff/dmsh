@@ -25,12 +25,16 @@ if (-not (Test-Path "$ProjectRoot\third_party\llama.cpp\build")) {
     New-Item -ItemType Directory -Path "$ProjectRoot\third_party\llama.cpp\build" -Force | Out-Null
 }
 
+# MinGW GCC emits aligned vmovaps to 16-byte-aligned stack slots at -O3,
+# crashing the AVX K-quant kernels (0xC0000005). -O2 avoids that codegen.
 & $CMake -G "MinGW Makefiles" -S "$ProjectRoot\third_party\llama.cpp" -B "$ProjectRoot\third_party\llama.cpp\build" `
     -DBUILD_SHARED_LIBS=OFF `
     -DLLAMA_BUILD_TESTS=OFF `
     -DLLAMA_BUILD_EXAMPLES=OFF `
     -DLLAMA_BUILD_SERVER=OFF `
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release `
+    -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG" `
+    -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG"
 
 & $CMake --build "$ProjectRoot\third_party\llama.cpp\build" --config Release -j
 
