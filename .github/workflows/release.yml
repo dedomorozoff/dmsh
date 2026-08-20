@@ -16,13 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             goos: linux
             goarch: amd64
-            ext: ""
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
             ext: ""
           - os: macos-latest
             goos: darwin
@@ -36,38 +32,45 @@ jobs:
             goos: windows
             goarch: amd64
             ext: ".exe"
-          - os: ubuntu-latest
-            goos: freebsd
-            goarch: amd64
-            ext: ""
-          - os: ubuntu-latest
-            goos: freebsd
-            goarch: arm64
-            ext: ""
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
 
-      - name: Get dependencies
-        run: go mod download
+      - name: Install deps (Linux)
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
 
-      - name: Build stub (no llama)
+      - name: Install deps (macOS)
+        if: matrix.goos == 'darwin'
+        run: brew install cmake
+
+      - name: Build llama.cpp
+        run: |
+          cmake -G "Unix Makefiles" -S third_party/llama.cpp -B third_party/llama.cpp/build -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build third_party/llama.cpp/build --config Release --parallel 2
+
+      - name: Build nlsh
         run: |
           mkdir -p bin
-          go build -ldflags="-s -w" -o "bin/nlsh${{ matrix.ext }}" ./cmd/nlsh
+          go build -tags llama -ldflags="-s -w" -o "bin/nlsh${{ matrix.ext }}" ./cmd/nlsh
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nlsh-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext != '' && '-' || '' }}${{ matrix.goarch }}${{ matrix.ext }}
+          name: nlsh-${{ matrix.goos }}-${{ matrix.goarch }}
           path: bin/nlsh${{ matrix.ext }}
 
   release:
@@ -78,22 +81,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release
 
-      - name: Create archive for each platform
+      - name: Package
         run: |
           mkdir -p dist
           for dir in release/nlsh-*; do
-            if [ -d "$dir" ]; then
-              name=$(basename "$dir")
-              if [[ "$name" == *"windows"* ]]; then
-                cp "$dir/nlsh.exe" "dist/$name.exe"
-              else
-                tar -czf "dist/$name.tar.gz" -C "$dir" .
-              fi
+            name=$(basename "$dir")
+            if [[ "$name" == *"windows"* ]]; then
+              cp "$dir/nlsh.exe" "dist/${name}.exe"
+            else
+              tar -czf "dist/${name}.tar.gz" -C "$dir" .
             fi
           done
           ls -la dist/

@@ -47,7 +47,8 @@ LLAMA_BUILD := $(LLAMA_DIR)/build
 
 GO := go
 GOFLAGS ?=
-LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --always 2>/dev/null | sed 's/^llama-//;s/^v//' || echo dev)
+LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(VERSION)
 
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0
@@ -205,15 +206,15 @@ ifeq ($(IS_UNIX),1)
 		cp bin/nlsh-linux-amd64 dist/deb/usr/bin/nlsh; \
 		cp man/* dist/deb/usr/share/man/man1/; \
 		echo "Package: nlsh" > dist/deb/DEBIAN/control; \
-		echo "Version: 1.0.0" >> dist/deb/DEBIAN/control; \
+		echo "Version: $(VERSION)" >> dist/deb/DEBIAN/control; \
 		echo "Section: utils" >> dist/deb/DEBIAN/control; \
 		echo "Priority: optional" >> dist/deb/DEBIAN/control; \
 		echo "Architecture: amd64" >> dist/deb/DEBIAN/control; \
 		echo "Maintainer: dedomorozoff <alexl@nlsh>" >> dist/deb/DEBIAN/control; \
 		echo "Description: Natural Language Shell (nlsh)" >> dist/deb/DEBIAN/control; \
-		dpkg-deb --build dist/deb bin/nlsh-1.0.0-amd64.deb; \
-		rm -rf dist; \
-		echo "Debian package created: bin/nlsh-1.0.0-amd64.deb"; \
+		dpkg-deb --build dist/deb bin/nlsh-$(VERSION)-amd64.deb; \
+		rm -rf dist/deb; \
+		echo "Debian package created: bin/nlsh-$(VERSION)-amd64.deb"; \
 	else \
 		echo "dpkg-deb not found. Skipping deb creation."; \
 	fi
@@ -229,7 +230,7 @@ ifeq ($(IS_UNIX),1)
 		cp bin/nlsh-linux-amd64 dist/rpmbuild/SOURCES/nlsh; \
 		cp -r man dist/rpmbuild/SOURCES/man; \
 		echo "Name:           nlsh" > dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "Version:        1.0.0" >> dist/rpmbuild/SPECS/nlsh.spec; \
+		echo "Version:        $(VERSION)" >> dist/rpmbuild/SPECS/nlsh.spec; \
 		echo "Release:        1%{?dist}" >> dist/rpmbuild/SPECS/nlsh.spec; \
 		echo "Summary: Natural Language Shell" >> dist/rpmbuild/SPECS/nlsh.spec; \
 		echo "License:        MIT" >> dist/rpmbuild/SPECS/nlsh.spec; \
@@ -245,7 +246,7 @@ ifeq ($(IS_UNIX),1)
 		echo "%{_mandir}/man1/*" >> dist/rpmbuild/SPECS/nlsh.spec; \
 		rpmbuild --define "_topdir $$(pwd)/dist/rpmbuild" -bb dist/rpmbuild/SPECS/nlsh.spec; \
 		cp dist/rpmbuild/RPMS/*/*.rpm bin/; \
-		rm -rf dist; \
+		rm -rf dist/rpmbuild; \
 		echo "RPM package created in bin/"; \
 	else \
 		echo "rpmbuild not found. Skipping RPM creation."; \
@@ -262,13 +263,13 @@ ifeq ($(IS_UNIX),1)
 	cp bin/nlsh-macos-amd64 dist/macos-amd64/bin/nlsh
 	cp man/* dist/macos-amd64/share/man/man1/
 	cp README.md dist/macos-amd64/
-	tar -czf bin/nlsh-1.0.0-darwin-amd64.tar.gz -C dist/macos-amd64 bin share README.md
+	tar -czf bin/nlsh-$(VERSION)-darwin-amd64.tar.gz -C dist/macos-amd64 bin share README.md
 	# Package for arm64
 	mkdir -p dist/macos-arm64/bin dist/macos-arm64/share/man/man1
 	cp bin/nlsh-macos-arm64 dist/macos-arm64/bin/nlsh
 	cp man/* dist/macos-arm64/share/man/man1/
 	cp README.md dist/macos-arm64/
-	tar -czf bin/nlsh-1.0.0-darwin-arm64.tar.gz -C dist/macos-arm64 bin share README.md
+	tar -czf bin/nlsh-$(VERSION)-darwin-arm64.tar.gz -C dist/macos-arm64 bin share README.md
 	rm -rf dist
 	echo "macOS packages created in bin/"
 else
@@ -282,9 +283,9 @@ ifeq ($(IS_UNIX),1)
 	cp bin/nlsh-freebsd-amd64 dist/freebsd-amd64/bin/nlsh
 	cp man/* dist/freebsd-amd64/share/man/man1/
 	cp README.md dist/freebsd-amd64/
-	tar -czf bin/nlsh-1.0.0-freebsd-amd64.tar.gz -C dist/freebsd-amd64 bin share README.md
+	tar -czf bin/nlsh-$(VERSION)-freebsd-amd64.tar.gz -C dist/freebsd-amd64 bin share README.md
 	rm -rf dist
-	echo "FreeBSD package created: bin/nlsh-1.0.0-freebsd-amd64.tar.gz"
+	echo "FreeBSD package created: bin/nlsh-$(VERSION)-freebsd-amd64.tar.gz"
 else
 	@echo "FreeBSD packaging is only supported on Unix."
 endif
@@ -296,9 +297,9 @@ ifeq ($(IS_UNIX),1)
 	cp bin/nlsh-linux-amd64 dist/linux-amd64/bin/nlsh
 	cp man/* dist/linux-amd64/share/man/man1/
 	cp README.md dist/linux-amd64/
-	tar -czf bin/nlsh-1.0.0-linux-amd64.tar.gz -C dist/linux-amd64 bin share README.md
+	tar -czf bin/nlsh-$(VERSION)-linux-amd64.tar.gz -C dist/linux-amd64 bin share README.md
 	rm -rf dist
-	echo "Linux tarball created: bin/nlsh-1.0.0-linux-amd64.tar.gz"
+	echo "Linux tarball created: bin/nlsh-$(VERSION)-linux-amd64.tar.gz"
 else
 	@echo "Linux tarball packaging is only supported on Unix."
 endif
@@ -321,7 +322,7 @@ ifeq ($(IS_UNIX),1)
 	mkdir -p dist/windows-amd64
 	cp bin/nlsh-windows-amd64.exe dist/windows-amd64/nlsh.exe
 	cp README.md dist/windows-amd64/
-	zip -r bin/nlsh-1.0.0-windows-amd64.zip dist/windows-amd64
+		zip -r bin/nlsh-$(VERSION)-windows-amd64.zip dist/windows-amd64
 	rm -rf dist
 	@if command -v iscc >/dev/null 2>&1; then \
 		iscc installer.iss; \
@@ -332,7 +333,7 @@ else
 	powershell -Command "if (-not (Test-Path dist)) { New-Item -ItemType Directory -Path dist }"
 	powershell -Command "Copy-Item bin/nlsh-windows-amd64.exe dist/nlsh.exe -Force"
 	powershell -Command "Copy-Item README.md dist/README.md -Force"
-	powershell -Command "Compress-Archive -Path dist/* -DestinationPath bin/nlsh-1.0.0-windows-amd64.zip -Force"
+	powershell -Command "Compress-Archive -Path dist/* -DestinationPath bin/nlsh-$(VERSION)-windows-amd64.zip -Force"
 	powershell -Command "Remove-Item -Recurse -Force dist"
 	powershell -Command "if (Get-Command 'iscc' -ErrorAction SilentlyContinue) { iscc installer.iss } else { Write-Host 'iscc (Inno Setup) not found. Skipping GUI installer compilation.' -ForegroundColor Yellow }"
 endif

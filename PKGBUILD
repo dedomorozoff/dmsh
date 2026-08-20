@@ -2,7 +2,7 @@
 # Для локальной сборки из текущего дерева используйте: make dist-arch
 
 pkgname=nlsh
-pkgver=1.0.0
+pkgver=0.1.3
 pkgrel=1
 pkgdesc="Natural Language Shell - run shell commands in natural language via a local LLM"
 arch=('x86_64')
@@ -10,8 +10,13 @@ url="https://github.com/dedomorozoff/nlsh"
 license=('MIT')
 depends=('gcc-libs' 'glibc')
 makedepends=('go' 'cmake' 'gcc' 'make' 'git')
-source=("$pkgname::git+https://github.com/dedomorozoff/nlsh.git#tag=v1.0.0")
+source=("$pkgname::git+https://github.com/dedomorozoff/nlsh.git#tag=v$pkgver")
 sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  git describe --tags --always | sed 's/^v//'
+}
 
 prepare() {
   cd "$srcdir/$pkgname"
