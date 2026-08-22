@@ -334,7 +334,7 @@ else
 	powershell -Command "if (-not (Test-Path dist)) { New-Item -ItemType Directory -Path dist }"
 	powershell -Command "Copy-Item bin/nlsh-windows-amd64.exe dist/nlsh.exe -Force"
 	powershell -Command "Copy-Item README.md dist/README.md -Force"
-	powershell -Command "Compress-Archive -Path dist/* -DestinationPath bin/nlsh-$(VERSION)-windows-amd64.zip -Force"
+	powershell -Command "Remove-Item 'bin/nlsh-$(VERSION)-windows-amd64.zip' -Force -ErrorAction SilentlyContinue; tar -a -c -f bin/nlsh-$(VERSION)-windows-amd64.zip -C dist ."
 	powershell -Command "Remove-Item -Recurse -Force dist"
 	powershell -Command "if (Get-Command 'iscc' -ErrorAction SilentlyContinue) { iscc installer.iss } else { Write-Host 'iscc (Inno Setup) not found. Skipping GUI installer compilation.' -ForegroundColor Yellow }"
 endif
