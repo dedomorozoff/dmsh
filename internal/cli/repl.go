@@ -34,7 +34,7 @@ var errCancelQuestion = errors.New("cancelled")
 
 var slashCommands = []string{
 	"/exit", "/quit", "/help", "/cd", "/clear", "/pwd", "/history", "/bind", "/mode",
-	"/1", "/2", "/3", "/stats", "/retry", "/export", "/alias",
+	"/1", "/2", "/3", "/stats", "/retry", "/export", "/alias", "/model",
 }
 
 type slashCompleter struct {
@@ -434,6 +434,8 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		showKeyBindings(out)
 	case line == "/stats":
 		showStats(out, s)
+	case line == "/model":
+		showModel(out, s)
 	case line == "/retry":
 		// /retry перепросит последний запрос — обрабатывается в handleTurn
 		if s.lastInput == "" {
@@ -477,6 +479,19 @@ func showStats(out io.Writer, s *session) {
 	fmt.Fprintf(out, "  %sCommands run:%s  %d (LLM: %d, direct: %d)\n", bold, reset, total, s.stats.CommandsLLM, s.stats.CommandsDirect)
 	fmt.Fprintf(out, "  %sErrors fixed:%s  %d\n", bold, reset, s.stats.ErrorsFix)
 	fmt.Fprintf(out, "  %sCurrent mode:%s  %s\n\n", bold, reset, s.cfg.Mode)
+}
+
+func showModel(out io.Writer, s *session) {
+	fmt.Fprintf(out, "\n%s%s=== Model ===%s\n", bold, cyan, reset)
+	if s.cfg.ModelPath == "" {
+		fmt.Fprintf(out, "  %snone%s\n\n", yellow, reset)
+		return
+	}
+	fmt.Fprintf(out, "  %sIn use:%s  %s\n", bold, reset, s.cfg.ModelPath)
+	if fi, err := os.Stat(s.cfg.ModelPath); err == nil {
+		fmt.Fprintf(out, "  %sSize:%s    %d MB\n", bold, reset, fi.Size()/1024/1024)
+	}
+	fmt.Fprintln(out)
 }
 
 // handleExport обрабатывает /export.
@@ -612,6 +627,7 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/mode help%s or %s/mode 2%s or %s/2%s — Help mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/mode shell%s or %s/mode 3%s or %s/3%s — Shell mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/stats%s     — session statistics\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/model%s     — show the model currently in use\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/retry%s     — re-run last request with alternate approach\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/export%s    — copy last command to clipboard or /export last > file\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/alias%s     — list aliases; /alias name=\"request\" to create; /alias -d name to delete\n", yellow, reset)

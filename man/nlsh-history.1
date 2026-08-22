@@ -2,20 +2,28 @@
 .TH "NLSH" "1" "Aug 2026" "Natural Language Shell" "nlsh Manual"
 
 .SH NAME
-nlsh-info - Show system and configuration info
+nlsh-history - Show command history
 
 
 .SH SYNOPSIS
-\fBnlsh info [flags]\fP
+\fBnlsh history [flags]\fP
 
 
 .SH DESCRIPTION
-Show system and configuration info
+Display commands executed in previous and current sessions
 
 
 .SH OPTIONS
+\fB-g\fP, \fB--grep\fP=""
+	Filter history by query string
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for info
+	help for history
+
+.PP
+\fB-n\fP, \fB--limit\fP=50
+	Limit number of entries shown
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

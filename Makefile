@@ -48,7 +48,8 @@ LLAMA_BUILD := $(LLAMA_DIR)/build
 GO := go
 GOFLAGS ?=
 VERSION ?= $(shell git describe --tags --always 2>/dev/null | sed 's/^llama-//;s/^v//' || echo dev)
-LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(VERSION)
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(VERSION) -X github.com/dedomorozoff/nlsh/internal/cli.BuildDate=$(BUILD_DATE)
 
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0

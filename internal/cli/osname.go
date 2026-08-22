@@ -57,6 +57,9 @@ func buildInfo() string {
 	var b strings.Builder
 	b.WriteString("nlsh " + Version)
 	b.WriteString("; " + runtime.Version())
+	if d := strings.TrimSpace(BuildDate); d != "" {
+		b.WriteString("; built=" + d)
+	}
 	b.WriteString("; GOOS=" + runtime.GOOS)
 	b.WriteString("; GOARCH=" + runtime.GOARCH)
 	if bi, ok := debug.ReadBuildInfo(); ok {

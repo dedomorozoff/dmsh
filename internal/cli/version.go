@@ -13,6 +13,9 @@ import (
 // Version is set via -ldflags at build time.
 var Version = "dev"
 
+// BuildDate is set via -ldflags at build time (RFC3339 UTC).
+var BuildDate = ""
+
 // displayVersion возвращает человекочитаемую версию.
 // Из git describe ("v0.1.3-48-g2c82189-dirty") оставляем только номер тега.
 func displayVersion() string {
@@ -23,7 +26,8 @@ func displayVersion() string {
 	if i := strings.IndexByte(v, '-'); i > 0 {
 		v = v[:i]
 	}
-	if v == "" || !strings.HasPrefix(v, "v") {
+	v = strings.TrimPrefix(v, "v")
+	if v == "" {
 		return "dev"
 	}
 	return v
@@ -47,6 +51,9 @@ func newVersionCmd() *cobra.Command {
 		Short: "Show version",
 		Run: func(cmd *cobra.Command, _ []string) {
 			fmt.Fprintf(cmd.OutOrStdout(), "nlsh %s\n", displayVersion())
+			if d := strings.TrimSpace(BuildDate); d != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  Built:    %s\n", d)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  Go:       %s\n", runtime.Version())
 			fmt.Fprintf(cmd.OutOrStdout(), "  Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Build:    %s\n", buildTags())
