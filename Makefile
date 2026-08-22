@@ -308,7 +308,7 @@ endif
 dist-arch: ## Собрать и установить пакет для Arch Linux (makepkg -si)
 	@if command -v makepkg >/dev/null 2>&1; then \
 		mkdir -p dist/arch; \
-		sed 's|git+https://github.com/dedomorozoff/nlsh.git#tag=v1.0.0|git+file://$(CURDIR)#commit=$(shell git rev-parse HEAD)|' PKGBUILD > dist/arch/PKGBUILD; \
+		sed 's|git+https://github.com/dedomorozoff/nlsh.git#tag=v$$pkgver|git+file://$(CURDIR)#commit=$(shell git rev-parse HEAD)|' PKGBUILD > dist/arch/PKGBUILD; \
 		cd dist/arch && makepkg -si; \
 		echo "Пакет собран: $(CURDIR)/dist/arch/nlsh-*.pkg.tar.zst"; \
 	else \
