@@ -2,7 +2,7 @@
 # Для локальной сборки из текущего дерева используйте: make dist-arch
 
 pkgname=nlsh
-pkgver=0.1.3
+pkgver=0.2.5
 pkgrel=1
 pkgdesc="Natural Language Shell - run shell commands in natural language via a local LLM"
 arch=('x86_64')
