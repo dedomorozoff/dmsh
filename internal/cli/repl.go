@@ -175,7 +175,7 @@ func newReplCmd(rf *rootFlags) *cobra.Command {
 			out := cmd.OutOrStdout()
 			in := cmd.InOrStdin()
 
-			banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
+			banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /model, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
 				bold, cyan, reset, green, reset, gray, reset)
 			fmt.Fprint(out, banner)
 
