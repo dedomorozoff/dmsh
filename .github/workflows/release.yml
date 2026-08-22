@@ -61,7 +61,14 @@ jobs:
       - name: Build nlsh
         run: |
           mkdir -p bin
-          go build -tags llama -ldflags="-s -w" -o "bin/nlsh${{ matrix.ext }}" ./cmd/nlsh
+          case "$GITHUB_REF_NAME" in
+            v*) VERSION="${GITHUB_REF_NAME#v}" ;;
+            *)  VERSION="dev" ;;
+          esac
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build -tags llama \
+            -ldflags="-s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$VERSION -X github.com/dedomorozoff/nlsh/internal/cli.BuildDate=$BUILD_DATE" \
+            -o "bin/nlsh${{ matrix.ext }}" ./cmd/nlsh
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}

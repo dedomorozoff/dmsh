@@ -1,144 +1,164 @@
 # nlsh — Natural Language Shell
 
-`nlsh` is a shell where you can communicate with the system in natural language.
-A local lightweight LLM (GGUF via `llama.cpp`) is embedded directly into the binary
-via CGO — no HTTP server and no external processes.
+`nlsh` is a shell where you talk to your system in natural language.
+A local LLM (GGUF via `llama.cpp`) is embedded directly into the binary
+through CGO — no HTTP server, no external processes, no cloud.
 
-> Cross-platform (Windows, macOS, Linux).
+> Cross-platform: Linux, macOS, Windows.
 
-## Features (MVP)
+## How it works
 
-- `nlsh ask "..."` — explain what and how to do, without executing anything.
-- `nlsh run "..."` — suggest a shell command and execute it after confirmation.
-- `nlsh repl` — interactive mode with history and bash-like keybindings.
-- `nlsh info` — show system information and auto-detected GPU/CPU settings.
-- Hard JSON contract for model responses.
-- Safety policy gate against dangerous commands (`rm -rf /`, `mkfs`, fork bombs, etc.).
+1. You type a request like `show all txt files in this dir`.
+2. The model returns a strict JSON response (command + explanation).
+3. The safety policy layer checks the command (denylist + risk scoring:
+   `rm -rf /`, `mkfs`, fork bombs, etc. are blocked).
+4. The command runs in your shell and the result is shown.
 
-## Auto-Detection
+## Install
 
-nlsh automatically detects your system capabilities:
+### Packages
 
-| Component | Detection Method |
-|-----------|------------------|
-| CPU Cores | `runtime.NumCPU()` |
-| RAM | OS-specific (WMI on Windows, `/proc/meminfo` on Linux, `sysctl` on macOS) |
-| GPU | `nvidia-smi` (NVIDIA), `lspci` (AMD/Intel), `system_profiler` (macOS) |
+Grab a package from [GitHub Releases](https://github.com/dedomorozoff/nlsh/releases):
 
-GPU layers are automatically set based on detected GPU:
-- NVIDIA: 32 layers
-- AMD: 16 layers  
-- Intel: 8 layers
-- Apple Silicon: 32 layers
-- CPU only: 0 layers
+- `nlsh-<ver>-amd64.deb` — Debian/Ubuntu
+- `nlsh-<ver>-1-x86_64.pkg.tar.zst` — Arch Linux (`sudo pacman -U <file>`)
+- `nlsh-<ver>-linux-amd64.tar.gz` — generic Linux
+- Windows and macOS archives are also attached.
 
-You can override these values via CLI flags or config file.
+### Arch Linux (from source)
 
-## REPL Features
+```bash
+make dist-arch   # builds the package from the current tree and installs it
+```
 
-### Bash-like Keybindings (via readline)
+### From source
 
-| Keybinding | Action |
-|------------|--------|
-| `Ctrl+A` | move to beginning of line |
-| `Ctrl+E` | move to end of line |
-| `Ctrl+U` | delete to beginning of line |
-| `Ctrl+K` | delete to end of line |
-| `Ctrl+L` | clear screen |
-| `Ctrl+R` | reverse history search |
-| `Ctrl+S` | forward history search |
-| `Ctrl+P` | previous command |
-| `Ctrl+N` | next command |
-| `Alt+B` | backward by word |
-| `Alt+F` | forward by word |
-| `Alt+D` | delete word forward |
-| `Ctrl+W` | delete word backward |
+```bash
+git clone --recurse-submodules https://github.com/dedomorozoff/nlsh.git
+cd nlsh
+make llama       # build llama.cpp static libs (~10-15 min)
+make build       # build bin/nlsh
+```
 
-### Special Keys
+Requirements: Go 1.23+, C/C++ toolchain, CMake, Git.
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+C` | interrupt current operation (does not exit REPL) |
-| `Ctrl+D` | exit REPL (EOF) |
+## Quick start
 
-### Slash Commands
+```bash
+nlsh model wizard    # pick and download a GGUF model (interactive)
+nlsh repl            # start interactive mode
+```
+
+Or run one-off requests:
+
+```bash
+nlsh ask "how do I find big files?"     # explain only, nothing executes
+nlsh run "list png files"               # suggest a command, run after confirm
+```
+
+Point at a specific model with `--model /path/to/model.gguf`.
+
+## Models
+
+`nlsh model` opens an interactive wizard; subcommands:
 
 | Command | Description |
 |---------|-------------|
-| `/help` | show help |
-| `/exit` | exit REPL |
-| `/cd [path]` | change directory |
-| `/clear` | clear screen |
-| `/pwd` | show current directory |
+| `nlsh model list` | recommended + downloaded models |
+| `nlsh model download [<n>/name/url]` | download from list or direct .gguf URL |
+| `nlsh model use <name>` | set downloaded model as default |
+| `nlsh model path <name>` | print path to a downloaded model |
+| `nlsh pull [...]` | shortcut for `model download` |
+
+Recommended models include Qwopus3.5-9B-coder (Q3/Q4/Q5), Qwen3 4B/8B,
+Qwen3 1.7B, Qwen2.5 1.5B/0.5B, Llama 3.2 1B. nlsh suggests one based on
+your RAM. Config and downloaded models live under
+`~/.config/nlsh/` (`config.json`, `models/`) on Linux.
+
+## REPL
+
+Start with `nlsh repl`. Three modes:
+
+- **AI** (default) — generates and executes commands automatically.
+- **Help** — shows command + explanation, you run it yourself.
+- **Shell** — direct execution, natural language still understood.
+
+Switch with `/mode ai|help|shell` or `/1`, `/2`, `/3`.
+
+### Slash commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | full help |
+| `/model` | show the model currently in use |
+| `/stats` | session statistics |
+| `/retry` | re-run last request with alternate approach |
+| `/export` | copy last command to clipboard or `/export last > file` |
+| `/alias` | list aliases; `/alias name="request"`; `/alias -d name` |
 | `/history` | show history |
-| `/bind keys` | show keybindings list |
+| `/cd [path]` | change directory |
+| `/pwd` | show current directory |
+| `/clear` | clear screen |
+| `/bind keys` | show keybindings |
+| `/mode` | show/switch mode |
 | `!command` | execute command directly |
+| `/exit` | exit |
 
-## Requirements
+Bash-like keybindings are supported: `Ctrl+A/E/U/K/L/R/S/P/N`, `Ctrl+W`,
+`Alt+B/F/D`. `Ctrl+C` interrupts the current operation, `Ctrl+D` exits.
 
-- Go 1.22+
-- C/C++ toolchain with submodules
-- GGUF-model (Qwen2.5-3B-Instruct, Llama-3.2-3B-Instruct, Phi-3.5-mini)
+## Other commands
+
+| Command | Description |
+|---------|-------------|
+| `nlsh info` | system info: OS, CPU, RAM, GPU + auto-tuned settings |
+| `nlsh version` | version, build date, platform, build tags |
+| `nlsh config show/set` | view and edit configuration |
+| `nlsh history` | command history |
+
+## Auto-detection
+
+nlsh detects hardware on first run and tunes settings:
+
+| Component | Method |
+|-----------|--------|
+| CPU cores | `runtime.NumCPU()` |
+| RAM | WMI (Windows), `/proc/meminfo` (Linux), `sysctl` (macOS) |
+| GPU | `nvidia-smi`, `lspci`, `system_profiler` |
+
+Default GPU layers: NVIDIA 32, AMD 16, Intel 8, Apple Silicon 32,
+CPU-only 0. Override via flags or config file.
 
 ## Building
 
-### Quick Start
-
 ```bash
-git submodule update --init --recursive
-make llama       # build static libllama
-make build       # build nlsh binary
+make llama GPU=cuda    # CUDA support
+make llama GPU=metal   # Metal (Apple Silicon)
+make llama GPU=vulkan  # Vulkan
+make build-stub        # no LLM (no CGO) — useful for CI
+make build-all         # cross-compile binaries for all platforms
+make dist-deb          # .deb package
+make dist-arch         # Arch package (builds and installs)
+make dist-all          # everything
 ```
 
-### Build for All Platforms (Local Release)
+See `make help` for flags and details.
 
-To build binaries for all platforms locally (useful when GitHub Actions billing is exhausted):
-
-```bash
-make build-all   # builds Windows, Linux, macOS (amd64 & arm64)
-```
-
-This creates:
-- `bin/nlsh-windows-amd64.exe`
-- `bin/nlsh-linux-amd64`
-- `bin/nlsh-macos-amd64`
-- `bin/nlsh-macos-arm64`
-
-### GPU Acceleration
-
-```bash
-make llama GPU=cuda    # build with CUDA support
-make llama GPU=metal   # build with Metal support (Apple Silicon)
-make llama GPU=vulkan  # build with Vulkan support
-```
-
-### Build Stub (No LLM)
-
-```bash
-make build-stub      # build without llama.cpp (no LLM support)
-```
-
-Details on flags/speedups — in `Makefile` (`make help`).
-
-## Usage
-
-```bash
-nlsh --model /path/to/model.gguf repl
-```
-
-## Project Structure
+## Project structure
 
 ```
-cmd/nlsh/            CLI entry point
-internal/cli/        cobra commands (ask, run, repl)
-internal/llm/        CGO wrapper over llama.cpp
-internal/prompt/     system prompt + JSON response contract
-internal/policy/     safety gate (denylist + risk scoring)
-internal/executor/   shell command execution
-internal/config/     config loading
-third_party/llama.cpp/  submodule with llama.cpp
+cmd/nlsh/               CLI entry point
+internal/cli/           cobra commands, REPL
+internal/llm/           CGO wrapper over llama.cpp
+internal/prompt/        system prompt + JSON contract
+internal/policy/        safety gate (denylist + risk scoring)
+internal/executor/      shell command execution
+internal/config/        config loading/saving
+internal/model/         model download/management
+third_party/llama.cpp/  pinned llama.cpp submodule
 ```
 
 ## Status
 
-Early Beta.
+Early beta. Safety gate errs on the side of blocking; review commands in
+Help mode if you don't trust auto-execution yet.
