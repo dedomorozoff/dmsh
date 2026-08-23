@@ -22,7 +22,7 @@ dmsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device infere
 	show commands without executing them
 
 .PP
-\fB--gpu-layers\fP=16
+\fB--gpu-layers\fP=8
 	number of layers offloaded to GPU (0 = CPU only)
 
 .PP
@@ -38,7 +38,7 @@ dmsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device infere
 	path to GGUF model file
 
 .PP
-\fB--shell\fP="powershell"
+\fB--shell\fP="/bin/fish"
 	shell for command execution
 
 .PP
@@ -46,7 +46,7 @@ dmsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device infere
 	sampling temperature
 
 .PP
-\fB--threads\fP=12
+\fB--threads\fP=4
 	number of inference threads
 
 .PP
