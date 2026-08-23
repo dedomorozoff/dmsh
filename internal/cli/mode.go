@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/config"
 )
 
 // ModeSwitcher управляет переключением режимов в REPL.

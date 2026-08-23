@@ -55,7 +55,7 @@ func osVersion() string {
 // buildInfo возвращает информацию о сборке бинарника для промпта модели.
 func buildInfo() string {
 	var b strings.Builder
-	b.WriteString("nlsh " + Version)
+	b.WriteString("dmsh " + Version)
 	b.WriteString("; " + runtime.Version())
 	if d := strings.TrimSpace(BuildDate); d != "" {
 		b.WriteString("; built=" + d)

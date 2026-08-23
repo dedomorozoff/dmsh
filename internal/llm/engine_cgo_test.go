@@ -11,11 +11,11 @@ import (
 )
 
 // TestSmokeGenerate — быстрый дым-тест реальной модели. Запускается только
-// если задан NLSH_TEST_MODEL=/path/to/model.gguf и собрано с -tags llama.
+// если задан DMSH_TEST_MODEL=/path/to/model.gguf и собрано с -tags llama.
 func TestSmokeGenerate(t *testing.T) {
-	model := os.Getenv("NLSH_TEST_MODEL")
+	model := os.Getenv("DMSH_TEST_MODEL")
 	if model == "" {
-		t.Skip("NLSH_TEST_MODEL не задан")
+		t.Skip("DMSH_TEST_MODEL не задан")
 	}
 
 	eng, err := New(Params{

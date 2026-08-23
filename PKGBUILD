@@ -1,16 +1,16 @@
 # Maintainer: Dedo <dedo@morozoff>
 # Для локальной сборки из текущего дерева используйте: make dist-arch
 
-pkgname=nlsh
+pkgname=dmsh
 pkgver=0.2.5
 pkgrel=1
-pkgdesc="Natural Language Shell - run shell commands in natural language via a local LLM"
+pkgdesc="Direct Model Shell - run shell commands in natural language via a local LLM"
 arch=('x86_64')
-url="https://github.com/dedomorozoff/nlsh"
+url="https://github.com/dedomorozoff/dmsh"
 license=('MIT')
 depends=('gcc-libs' 'glibc')
 makedepends=('go' 'cmake' 'gcc' 'make' 'git')
-source=("$pkgname::git+https://github.com/dedomorozoff/nlsh.git#tag=v$pkgver")
+source=("$pkgname::git+https://github.com/dedomorozoff/dmsh.git#tag=v$pkgver")
 sha256sums=('SKIP')
 
 pkgver() {
@@ -32,7 +32,7 @@ build() {
 
 package() {
   cd "$srcdir/$pkgname"
-  install -Dm755 bin/nlsh "$pkgdir/usr/bin/nlsh"
-  install -Dm644 man/nlsh.1 -t "$pkgdir/usr/share/man/man1"
-  install -Dm644 man/nlsh-*.1 -t "$pkgdir/usr/share/man/man1"
+  install -Dm755 bin/dmsh "$pkgdir/usr/bin/dmsh"
+  install -Dm644 man/dmsh.1 -t "$pkgdir/usr/share/man/man1"
+  install -Dm644 man/dmsh-*.1 -t "$pkgdir/usr/share/man/man1"
 }

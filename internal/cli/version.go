@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +50,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Show version",
 		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintf(cmd.OutOrStdout(), "nlsh %s\n", displayVersion())
+			fmt.Fprintf(cmd.OutOrStdout(), "dmsh %s\n", displayVersion())
 			if d := strings.TrimSpace(BuildDate); d != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "  Built:    %s\n", d)
 			}

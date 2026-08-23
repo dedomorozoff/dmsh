@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/chzyer/readline"
-	"github.com/dedomorozoff/nlsh/internal/config"
-	"github.com/dedomorozoff/nlsh/internal/executor"
-	"github.com/dedomorozoff/nlsh/internal/feedback"
-	"github.com/dedomorozoff/nlsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/executor"
+	"github.com/dedomorozoff/dmsh/internal/feedback"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -175,7 +175,7 @@ func newReplCmd(rf *rootFlags) *cobra.Command {
 			out := cmd.OutOrStdout()
 			in := cmd.InOrStdin()
 
-			banner := fmt.Sprintf("%s%s.nlsh%s — Natural Language Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /model, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
+			banner := fmt.Sprintf("%s%s.dmsh%s — Direct Model Shell (%srepl%s mode)\n%sType a request or /help for help. Commands: /stats, /model, /retry, /export, /alias, /bind. Use /1, /2, /3 to switch modes.%s\n\n",
 				bold, cyan, reset, green, reset, gray, reset)
 			fmt.Fprint(out, banner)
 
@@ -609,8 +609,8 @@ func showKeyBindings(out io.Writer) {
 }
 
 func showHelp(out io.Writer) {
-	fmt.Fprintf(out, "%s%s=== nlsh help ===%s\n\n", bold, cyan, reset)
-	fmt.Fprintf(out, "%sDescription:%s\n  nlsh is a natural language shell. Type \"show files\" and it\n  runs \"ls -la\" for you.\n\n", bold, reset)
+	fmt.Fprintf(out, "%s%s=== dmsh help ===%s\n\n", bold, cyan, reset)
+	fmt.Fprintf(out, "%sDescription:%s\n  dmsh is a natural language shell. Type \"show files\" and it\n  runs \"ls -la\" for you.\n\n", bold, reset)
 	fmt.Fprintf(out, "%sModes:%s\n", bold, reset)
 	fmt.Fprintf(out, "  %sAI%s    — AI generates and executes commands automatically (default)\n", yellow, reset)
 	fmt.Fprintf(out, "  %sHelp%s  — AI shows command + explanation, you run it manually\n", yellow, reset)
@@ -817,7 +817,7 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 			return resp, nil
 		}
 
-		fmt.Fprintf(out, "%s[nlsh]%s %s%s%s\n", cyan, reset, cyan, resp.Question, reset)
+		fmt.Fprintf(out, "%s[dmsh]%s %s%s%s\n", cyan, reset, cyan, resp.Question, reset)
 
 		if s.input == nil {
 			return resp, nil
@@ -886,7 +886,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 
 	if fb.Success {
 		if hint := fb.Format(); hint != "" {
-			fmt.Fprintf(out, "\n%s[nlsh]%s %s%s%s\n", green, reset, green, hint, reset)
+			fmt.Fprintf(out, "\n%s[dmsh]%s %s%s%s\n", green, reset, green, hint, reset)
 		}
 		return nil
 	}
@@ -897,7 +897,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 		stderr = res.Err.Error()
 	}
 
-	fmt.Fprintf(out, "\n%s[nlsh]%s Error detected (code %d). Requesting auto-correction from LLM...\n", yellow, reset, res.ExitCode)
+	fmt.Fprintf(out, "\n%s[dmsh]%s Error detected (code %d). Requesting auto-correction from LLM...\n", yellow, reset, res.ExitCode)
 	s.stats.ErrorsFix++
 
 	correctionInput := fmt.Sprintf("Command '%s' failed.\nExit code: %d\nStderr:\n%s\n\nPlease fix the command so it runs successfully on the current OS.", resp.Command, res.ExitCode, stderr)
@@ -936,9 +936,9 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 
 	if hint := fbCorr.Format(); hint != "" {
 		if fbCorr.Success {
-			fmt.Fprintf(out, "\n%s[nlsh]%s %s%s%s\n", green, reset, green, hint, reset)
+			fmt.Fprintf(out, "\n%s[dmsh]%s %s%s%s\n", green, reset, green, hint, reset)
 		} else {
-			fmt.Fprintf(out, "\n%s[nlsh]%s %s%s%s\n", yellow, reset, yellow, hint, reset)
+			fmt.Fprintf(out, "\n%s[dmsh]%s %s%s%s\n", yellow, reset, yellow, hint, reset)
 		}
 	}
 

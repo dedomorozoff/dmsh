@@ -24,7 +24,7 @@ static void llama_log_silent(enum ggml_log_level level, const char * text, void 
     (void) level; (void) text; (void) user_data;
 }
 
-static void nlsh_silence_logs(void) {
+static void dmsh_silence_logs(void) {
     llama_log_set(llama_log_silent, NULL);
 }
 */
@@ -41,7 +41,7 @@ import (
 )
 
 func init() {
-	C.nlsh_silence_logs()
+	C.dmsh_silence_logs()
 	C.llama_backend_init()
 }
 

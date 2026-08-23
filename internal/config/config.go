@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// Mode определяет режим работы nlsh.
+// Mode определяет режим работы dmsh.
 type Mode string
 
 const (
@@ -20,7 +20,7 @@ const (
 	ModeShell    Mode = "shell"    // Прозрачный проход через оболочку
 )
 
-// Config описывает рантайм-настройки nlsh. Поля сознательно плоские,
+// Config описывает рантайм-настройки dmsh. Поля сознательно плоские,
 // чтобы их легко было пробрасывать из флагов CLI и из JSON-файла.
 type Config struct {
 	ModelPath   string  `json:"model_path"`
@@ -90,7 +90,7 @@ func Default() Config {
 	}
 }
 
-// Load читает конфиг из ~/.config/nlsh/config.json, если он есть, и
+// Load читает конфиг из ~/.config/dmsh/config.json, если он есть, и
 // мерджит его поверх дефолтов. Отсутствие файла — не ошибка.
 func Load() (Config, error) {
 	cfg := Default()
@@ -121,7 +121,7 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// Save сохраняет конфигурацию в ~/.config/nlsh/config.json
+// Save сохраняет конфигурацию в ~/.config/dmsh/config.json
 func Save(cfg Config) error {
 	path, err := userConfigPath()
 	if err != nil {
@@ -149,7 +149,7 @@ func userConfigPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "nlsh", "config.json"), nil
+	return filepath.Join(dir, "dmsh", "config.json"), nil
 }
 
 func defaultShell() string {
@@ -167,7 +167,7 @@ func defaultHistoryFile() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "nlsh", "history.jsonl")
+	return filepath.Join(dir, "dmsh", "history.jsonl")
 }
 
 // DetectRAMGB определяет объем RAM в гигабайтах.

@@ -1,6 +1,6 @@
-# nlsh — Natural Language Shell
+# dmsh — Direct Model Shell
 
-`nlsh` is a shell where you talk to your system in natural language.
+`dmsh` is a shell where you talk to your system in natural language.
 A local LLM (GGUF via `llama.cpp`) is embedded directly into the binary
 through CGO — no HTTP server, no external processes, no cloud.
 
@@ -23,11 +23,11 @@ pass the safety check and are rated low-risk. Pass `--dry-run` (or set
 
 ### Packages
 
-Grab a package from [GitHub Releases](https://github.com/dedomorozoff/nlsh/releases):
+Grab a package from [GitHub Releases](https://github.com/dedomorozoff/dmsh/releases):
 
-- `nlsh-<ver>-amd64.deb` — Debian/Ubuntu
-- `nlsh-<ver>-1-x86_64.pkg.tar.zst` — Arch Linux (`sudo pacman -U <file>`)
-- `nlsh-<ver>-linux-amd64.tar.gz` — generic Linux
+- `dmsh-<ver>-amd64.deb` — Debian/Ubuntu
+- `dmsh-<ver>-1-x86_64.pkg.tar.zst` — Arch Linux (`sudo pacman -U <file>`)
+- `dmsh-<ver>-linux-amd64.tar.gz` — generic Linux
 - Windows and macOS archives are also attached.
 
 ### Arch Linux (from source)
@@ -39,10 +39,10 @@ make dist-arch   # builds the package from the current tree and installs it
 ### From source
 
 ```bash
-git clone --recurse-submodules https://github.com/dedomorozoff/nlsh.git
-cd nlsh
+git clone --recurse-submodules https://github.com/dedomorozoff/dmsh.git
+cd dmsh
 make llama       # build llama.cpp static libs (~10-15 min)
-make build       # build bin/nlsh
+make build       # build bin/dmsh
 ```
 
 Requirements: Go 1.23+, C/C++ toolchain, CMake, Git.
@@ -50,51 +50,51 @@ Requirements: Go 1.23+, C/C++ toolchain, CMake, Git.
 ## Quick start
 
 ```bash
-nlsh model          # interactive wizard: pick and download a GGUF model
-nlsh repl           # start interactive mode
+dmsh model          # interactive wizard: pick and download a GGUF model
+dmsh repl           # start interactive mode
 ```
 
 Or run one-off requests:
 
 ```bash
-nlsh ask "how do I find big files?"   # explain only, nothing executes
-nlsh run "list png files"             # suggest a command, execute after review
-nlsh "show last 20 lines of syslog"   # bare query = one-shot run
-cat error.log | nlsh "what's wrong here?"   # stdin is passed to the model
+dmsh ask "how do I find big files?"   # explain only, nothing executes
+dmsh run "list png files"             # suggest a command, execute after review
+dmsh "show last 20 lines of syslog"   # bare query = one-shot run
+cat error.log | dmsh "what's wrong here?"   # stdin is passed to the model
 ```
 
 Point at a specific model with `--model /path/to/model.gguf`.
 
 ## Models
 
-Bare `nlsh model` opens an interactive download wizard. Subcommands:
+Bare `dmsh model` opens an interactive download wizard. Subcommands:
 
 | Command | Description |
 |---------|-------------|
-| `nlsh model list` | recommended + downloaded models |
-| `nlsh model download [<n>/name/url]` | download from list or direct .gguf URL |
-| `nlsh model use <name>` | set downloaded model as default |
-| `nlsh model path [name]` | print path to a downloaded model |
-| `nlsh pull [...]` | shortcut for `model download` |
+| `dmsh model list` | recommended + downloaded models |
+| `dmsh model download [<n>/name/url]` | download from list or direct .gguf URL |
+| `dmsh model use <name>` | set downloaded model as default |
+| `dmsh model path [name]` | print path to a downloaded model |
+| `dmsh pull [...]` | shortcut for `model download` |
 
 Recommended models: Qwopus3.5-9B-coder (Q3/Q4/Q5), Qwen3 4B/8B,
 Qwen3 1.7B, Qwen2.5 1.5B/0.5B, Llama 3.2 1B. The wizard shows the RAM
-each option needs next to its name; without an explicit choice nlsh
+each option needs next to its name; without an explicit choice dmsh
 falls back to the smallest model (Qwen2.5 0.5B).
 
 Config and models live under:
 
 | OS | Path |
 |----|------|
-| Linux | `~/.config/nlsh/` (`config.json`, `models/`) |
-| macOS | `~/Library/Application Support/nlsh/` |
-| Windows | `%AppData%\nlsh\` |
+| Linux | `~/.config/dmsh/` (`config.json`, `models/`) |
+| macOS | `~/Library/Application Support/dmsh/` |
+| Windows | `%AppData%\dmsh\` |
 
 History is stored alongside (`history.jsonl`).
 
 ## REPL
 
-Start with `nlsh repl`. Three modes:
+Start with `dmsh repl`. Three modes:
 
 - **AI** (default) — generates commands and executes them automatically
   after the safety check; anything non-trivial asks for confirmation.
@@ -132,10 +132,10 @@ Bash-like keybindings are supported: `Ctrl+A/E/U/K/L/R/S/P/N`, `Ctrl+W`,
 
 | Command | Description |
 |---------|-------------|
-| `nlsh info` | system info: OS, CPU, RAM, GPU + auto-tuned settings |
-| `nlsh version` | version, build date, platform, build tags |
-| `nlsh config show/set` | view and edit configuration (incl. custom `danger_patterns` / `suspicious_patterns`) |
-| `nlsh history` | command history |
+| `dmsh info` | system info: OS, CPU, RAM, GPU + auto-tuned settings |
+| `dmsh version` | version, build date, platform, build tags |
+| `dmsh config show/set` | view and edit configuration (incl. custom `danger_patterns` / `suspicious_patterns`) |
+| `dmsh history` | command history |
 
 Common flags (all subcommands): `--model`, `--threads`, `--ctx-size`,
 `--gpu-layers`, `--max-tokens`, `--temperature`, `--top-p`, `--shell`,
@@ -143,7 +143,7 @@ Common flags (all subcommands): `--model`, `--threads`, `--ctx-size`,
 
 ## Auto-detection
 
-nlsh detects hardware on first run and tunes settings:
+dmsh detects hardware on first run and tunes settings:
 
 | Component | Method |
 |-----------|--------|
@@ -172,7 +172,7 @@ You can extend both lists via config (`danger_patterns`,
 `suspicious_patterns`). Blocked patterns also apply to commands the
 model suggests as corrections.
 
-Note: out of the box nlsh is *not* dry-run. If you want a strict
+Note: out of the box dmsh is *not* dry-run. If you want a strict
 review-everything workflow, use Help mode or `--dry-run`.
 
 ## Building
@@ -197,7 +197,7 @@ See `make help` for flags and details.
 ## Project structure
 
 ```
-cmd/nlsh/               CLI entry point
+cmd/dmsh/               CLI entry point
 internal/cli/           cobra commands, REPL
 internal/llm/           CGO wrapper over llama.cpp
 internal/prompt/        system prompt + JSON contract

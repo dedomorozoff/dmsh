@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +13,7 @@ func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Manage configuration",
-		Long:  "View and edit configuration parameters for nlsh",
+		Long:  "View and edit configuration parameters for dmsh",
 	}
 
 	cmd.AddCommand(&cobra.Command{

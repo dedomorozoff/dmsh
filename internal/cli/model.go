@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
-	"github.com/dedomorozoff/nlsh/internal/model"
+	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/model"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +18,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model",
 		Short: "Model management",
-		Long:  "Download or select a model for nlsh",
+		Long:  "Download or select a model for dmsh",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				return cmd.Help()
@@ -66,7 +66,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 		Use:   "download [number, name, or URL]",
 		Short: "Download a model (URL or from list)",
 		Long: `Downloads a GGUF model. You can specify:
-  a number from the list (nlsh model list)
+  a number from the list (dmsh model list)
   a model name from the list
   a direct URL to a .gguf file`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -112,7 +112,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 
 			if !found {
 				errMsg := fmt.Sprintf("model %q not found in the list.\n", target)
-				errMsg += "  Use: nlsh model list\n"
+				errMsg += "  Use: dmsh model list\n"
 				errMsg += "  Or provide a direct URL to a .gguf file"
 				return errors.New(errMsg)
 			}

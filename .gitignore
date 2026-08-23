@@ -1,9 +1,9 @@
 # Binaries
 /bin/
 /dist/
-nlsh
-nlsh.exe
-!/cmd/nlsh/
+dmsh
+dmsh.exe
+!/cmd/dmsh/
 
 # Build artifacts
 *.o
@@ -27,10 +27,10 @@ models/
 bundle/
 
 # Installer outputs
-nlsh-setup-*.exe
+dmsh-setup-*.exe
 
 # Local config & logs
-.nlsh/
+.dmsh/
 *.log
 
 # Editors

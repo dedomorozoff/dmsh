@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
-	"github.com/dedomorozoff/nlsh/internal/policy"
-	"github.com/dedomorozoff/nlsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/policy"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 	"github.com/spf13/cobra"
 )
 

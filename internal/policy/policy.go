@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
 // Decision — результат проверки команды политикой.

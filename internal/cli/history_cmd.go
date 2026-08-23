@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/spf13/cobra"
 )
 

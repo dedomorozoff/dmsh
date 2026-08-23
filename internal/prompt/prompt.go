@@ -30,7 +30,7 @@ type Context struct {
 	RecentTurns []Turn
 }
 
-const systemPromptBase = `You are nlsh, an intelligent natural language shell assistant.
+const systemPromptBase = `You are dmsh, an intelligent natural language shell assistant.
 You receive a user's request in natural language and respond with a single JSON object.
 
 Rules:

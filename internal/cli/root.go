@@ -3,7 +3,7 @@ package cli
 import (
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -18,9 +18,9 @@ func NewRootCmd() *cobra.Command {
 	rf := &rootFlags{cfg: cfg}
 
 	cmd := &cobra.Command{
-		Use:   "nlsh [query]",
-		Short: "Natural Language Shell — talk to your system naturally",
-		Long:  "nlsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device inference — no cloud, no HTTP server.",
+		Use:   "dmsh [query]",
+		Short: "Direct Model Shell — talk to your system naturally",
+		Long:  "dmsh is a local LLM-powered shell assistant. Uses llama.cpp for on-device inference — no cloud, no HTTP server.",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {

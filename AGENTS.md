@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project Context
-- Project: `nlsh` (Natural Language Shell).
+- Project: `dmsh` (Direct Model Shell).
 - Stack: Go + `llama.cpp` via CGO (no HTTP bridge).
 - Primary target: Cross-platform behavior and OS-native commands (Windows, macOS, Linux).
 

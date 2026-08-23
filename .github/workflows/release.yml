@@ -58,7 +58,7 @@ jobs:
           cmake -G "Unix Makefiles" -S third_party/llama.cpp -B third_party/llama.cpp/build -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/llama.cpp/build --config Release --parallel 2
 
-      - name: Build nlsh
+      - name: Build dmsh
         run: |
           mkdir -p bin
           case "$GITHUB_REF_NAME" in
@@ -67,8 +67,8 @@ jobs:
           esac
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           go build -tags llama \
-            -ldflags="-s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$VERSION -X github.com/dedomorozoff/nlsh/internal/cli.BuildDate=$BUILD_DATE" \
-            -o "bin/nlsh${{ matrix.ext }}" ./cmd/nlsh
+            -ldflags="-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$VERSION -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$BUILD_DATE" \
+            -o "bin/dmsh${{ matrix.ext }}" ./cmd/dmsh
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -77,8 +77,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nlsh-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: bin/nlsh${{ matrix.ext }}
+          name: dmsh-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/dmsh${{ matrix.ext }}
 
   release:
     needs: build
@@ -96,10 +96,10 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          for dir in release/nlsh-*; do
+          for dir in release/dmsh-*; do
             name=$(basename "$dir")
             if [[ "$name" == *"windows"* ]]; then
-              cp "$dir/nlsh.exe" "dist/${name}.exe"
+              cp "$dir/dmsh.exe" "dist/${name}.exe"
             else
               tar -czf "dist/${name}.tar.gz" -C "$dir" .
             fi

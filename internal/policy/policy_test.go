@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/dedomorozoff/nlsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
 func evaluateHelper(cmd string, suggested prompt.Risk) Decision {

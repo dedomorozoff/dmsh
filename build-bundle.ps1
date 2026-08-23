@@ -1,4 +1,4 @@
-# nlsh Windows Bundle Build Script
+# dmsh Windows Bundle Build Script
 # Downloads model and prepares files for offline installer
 # Run with: .\build-bundle.ps1
 
@@ -9,24 +9,24 @@ if (-not $ProjectRoot) {
     $ProjectRoot = Get-Location
 }
 
-Write-Host "=== nlsh Windows Bundle Build ===" -ForegroundColor Cyan
+Write-Host "=== dmsh Windows Bundle Build ===" -ForegroundColor Cyan
 
 # Model to bundle (recommended model)
 $ModelName = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
 $ModelURL = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 $BundleDir = "$ProjectRoot\bundle"
 
-# 1. Build nlsh.exe if not exists
-if (-not (Test-Path "$ProjectRoot\bin\nlsh.exe")) {
-    Write-Host "[1/3] Building nlsh.exe..." -ForegroundColor Yellow
+# 1. Build dmsh.exe if not exists
+if (-not (Test-Path "$ProjectRoot\bin\dmsh.exe")) {
+    Write-Host "[1/3] Building dmsh.exe..." -ForegroundColor Yellow
     if (Test-Path "$ProjectRoot\third_party\llama.cpp\build") {
         & "$ProjectRoot\build.ps1"
     } else {
         Write-Host "  llama.cpp not built. Building stub version..." -ForegroundColor Yellow
-        go build -ldflags "-s -w" -o "$ProjectRoot\bin\nlsh.exe" "$ProjectRoot\cmd\nlsh"
+        go build -ldflags "-s -w" -o "$ProjectRoot\bin\dmsh.exe" "$ProjectRoot\cmd\dmsh"
     }
 } else {
-    Write-Host "[1/3] nlsh.exe already exists" -ForegroundColor Green
+    Write-Host "[1/3] dmsh.exe already exists" -ForegroundColor Green
 }
 
 # 2. Download model if not exists
@@ -85,9 +85,9 @@ foreach ($dll in $DLLs) {
     }
 }
 
-# Copy nlsh.exe
-Copy-Item "$ProjectRoot\bin\nlsh.exe" "$BundleDir\" -Force
-Write-Host "  Copied nlsh.exe" -ForegroundColor Green
+# Copy dmsh.exe
+Copy-Item "$ProjectRoot\bin\dmsh.exe" "$BundleDir\" -Force
+Write-Host "  Copied dmsh.exe" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "=== Bundle ready ===" -ForegroundColor Green

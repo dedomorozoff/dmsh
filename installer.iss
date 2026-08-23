@@ -1,23 +1,23 @@
-; installer.iss - Скрипт Inno Setup для создания GUI-установщика nlsh под Windows
+; installer.iss - Скрипт Inno Setup для создания GUI-установщика dmsh под Windows
 
 [Setup]
-AppName=nlsh
+AppName=dmsh
 AppVersion=1.0.0
-DefaultDirName={userappdata}\Programs\nlsh
-DefaultGroupName=nlsh
-UninstallDisplayIcon={app}\nlsh.exe
+DefaultDirName={userappdata}\Programs\dmsh
+DefaultGroupName=dmsh
+UninstallDisplayIcon={app}\dmsh.exe
 OutputDir=.
-OutputBaseFilename=nlsh-setup-online
+OutputBaseFilename=dmsh-setup-online
 Compression=lzma
 SolidCompression=yes
 ChangesEnvironment=yes
 PrivilegesRequired=lowest
 
 [Files]
-Source: "bin\nlsh.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\dmsh.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
-Name: envPath; Description: "Добавить nlsh в переменную PATH пользователя"; Flags: checkedonce
+Name: envPath; Description: "Добавить dmsh в переменную PATH пользователя"; Flags: checkedonce
 
 [Registry]
 ; Добавление директории установки в PATH пользователя
@@ -25,7 +25,7 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 
 [Run]
 ; Скачивание рекомендуемой модели в конце установки
-Filename: "{app}\nlsh.exe"; Parameters: "model download --set-default"; Description: "Скачать рекомендуемую LLM-модель (автоматически выберет оптимальную под ОЗУ)"; Flags: postinstall waituntilterminated
+Filename: "{app}\dmsh.exe"; Parameters: "model download --set-default"; Description: "Скачать рекомендуемую LLM-модель (автоматически выберет оптимальную под ОЗУ)"; Flags: postinstall waituntilterminated
 
 [Code]
 function NotOnPathYet(): Boolean;

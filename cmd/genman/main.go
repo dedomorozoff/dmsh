@@ -4,17 +4,17 @@ import (
 	"log"
 	"os"
 
-	"github.com/dedomorozoff/nlsh/internal/cli"
+	"github.com/dedomorozoff/dmsh/internal/cli"
 	"github.com/spf13/cobra/doc"
 )
 
 func main() {
 	cmd := cli.NewRootCmd()
 	header := &doc.GenManHeader{
-		Title:   "NLSH",
+		Title:   "DMSH",
 		Section: "1",
-		Source:  "Natural Language Shell",
-		Manual:  "nlsh Manual",
+		Source:  "Direct Model Shell",
+		Manual:  "dmsh Manual",
 	}
 
 	err := os.MkdirAll("man", 0755)

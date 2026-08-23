@@ -13,7 +13,7 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	errOut := cmd.ErrOrStderr()
 
 	fmt.Fprintln(out, "╔══════════════════════════════════════════╗")
-	fmt.Fprintln(out, "║          .nlsh — Natural Shell           ║")
+	fmt.Fprintln(out, "║          .dmsh — Natural Shell           ║")
 	fmt.Fprintln(out, "║   Type commands in natural language      ║")
 	fmt.Fprintln(out, "║   Example: show me all files             ║")
 	fmt.Fprintln(out, "║   Commands: /stats /model /retry         ║")
@@ -26,7 +26,7 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	if err != nil {
 		fmt.Fprintln(errOut, "")
 		fmt.Fprintf(errOut, "  ✗ Model error: %v\n", err)
-		fmt.Fprintln(errOut, "  → Run: nlsh model")
+		fmt.Fprintln(errOut, "  → Run: dmsh model")
 		fmt.Fprintln(errOut, "")
 		return err
 	}

@@ -2,13 +2,13 @@
 ; Run: iscc installer-bundle.iss
 
 [Setup]
-AppName=nlsh
+AppName=dmsh
 AppVersion=1.0.0
-DefaultDirName={userappdata}\Programs\nlsh
-DefaultGroupName=nlsh
-UninstallDisplayIcon={app}\nlsh.exe
+DefaultDirName={userappdata}\Programs\dmsh
+DefaultGroupName=dmsh
+UninstallDisplayIcon={app}\dmsh.exe
 OutputDir=.
-OutputBaseFilename=nlsh-setup-bundle
+OutputBaseFilename=dmsh-setup-bundle
 Compression=lzma2/ultra64
 SolidCompression=yes
 ChangesEnvironment=yes
@@ -17,7 +17,7 @@ ExtraDiskSpaceRequired=700000000
 
 [Files]
 ; Main executable
-Source: "bin\nlsh.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\dmsh.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Bundled model (will be moved to user config dir during install)
 Source: "bundle\qwen2.5-0.5b-instruct-q4_k_m.gguf"; DestDir: "{app}"; Flags: ignoreversion
 ; MinGW runtime DLLs
@@ -27,14 +27,14 @@ Source: "bundle\libgomp-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "bundle\libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
-Name: envPath; Description: "Add nlsh to user PATH"; Flags: checkedonce
+Name: envPath; Description: "Add dmsh to user PATH"; Flags: checkedonce
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: envPath; Check: NotOnPathYet
 
 [Run]
 ; Configure bundled model as default
-Filename: "{app}\nlsh.exe"; Parameters: "model use qwen2.5-0.5b-instruct-q4_k_m"; Description: "Configure bundled model as default"; Flags: postinstall waituntilterminated runhidden
+Filename: "{app}\dmsh.exe"; Parameters: "model use qwen2.5-0.5b-instruct-q4_k_m"; Description: "Configure bundled model as default"; Flags: postinstall waituntilterminated runhidden
 
 [Code]
 function NotOnPathYet(): Boolean;
@@ -59,7 +59,7 @@ begin
   begin
     // Move bundled model to user's config directory
     ModelSource := ExpandConstant('{app}\qwen2.5-0.5b-instruct-q4_k_m.gguf');
-    ConfigDir := ExpandConstant('{userappdata}') + '\nlsh\models';
+    ConfigDir := ExpandConstant('{userappdata}') + '\dmsh\models';
     ModelDest := ConfigDir + '\qwen2.5-0.5b-instruct-q4_k_m.gguf';
 
     if not DirExists(ConfigDir) then

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dedomorozoff/nlsh/internal/cli"
+	"github.com/dedomorozoff/dmsh/internal/cli"
 )
 
 func main() {

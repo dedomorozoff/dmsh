@@ -31,7 +31,7 @@ func New(modelDir string) *Downloader {
 
 func defaultModelDir() string {
 	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "nlsh", "models")
+	return filepath.Join(dir, "dmsh", "models")
 }
 
 func (d *Downloader) ModelPath(name string) string {

@@ -5,10 +5,10 @@ UNAME_S := $(shell uname -s 2>/dev/null)
 
 .PHONY: help
 help:
-	@echo "nlsh — Natural Language Shell"
+	@echo "dmsh — Direct Model Shell"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  build             Build with llama.cpp (CGO) — bin/nlsh"
+	@echo "  build             Build with llama.cpp (CGO) — bin/dmsh"
 	@echo "  build-stub        Build without llama.cpp (stub)"
 	@echo "  llama / llama-prepare  Build llama.cpp C library"
 	@echo "  build-all         Build for all platforms"
@@ -49,7 +49,7 @@ GO := go
 GOFLAGS ?=
 VERSION ?= $(shell git describe --tags --always 2>/dev/null | sed 's/^llama-//;s/^v//' || echo dev)
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS ?= -s -w -X github.com/dedomorozoff/nlsh/internal/cli.Version=$(VERSION) -X github.com/dedomorozoff/nlsh/internal/cli.BuildDate=$(BUILD_DATE)
+LDFLAGS ?= -s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$(VERSION) -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$(BUILD_DATE)
 
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0
@@ -76,7 +76,7 @@ MINGW_BIN := /c/ProgramData/mingw64/mingw64/bin
 .DEFAULT_GOAL := help
 .PHONY: help
 help: ## Показать список доступных целей
-	@echo "nlsh targets:"
+	@echo "dmsh targets:"
 	@echo
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*##"} {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
@@ -103,16 +103,16 @@ llama: llama-prepare
 .PHONY: build
 build: llama-prepare ## Собрать релизный бинарник (llama, CGO)
 ifeq ($(IS_UNIX),1)
-	$(GO) build $(GOFLAGS) -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh ./cmd/nlsh
+	$(GO) build $(GOFLAGS) -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh ./cmd/dmsh
 else
 	powershell -Command "if (-not (Test-Path bin)) { New-Item -ItemType Directory -Path bin }"
-	powershell -Command "go build -tags llama -ldflags '$(LDFLAGS)' -o bin/nlsh.exe ./cmd/nlsh"
+	powershell -Command "go build -tags llama -ldflags '$(LDFLAGS)' -o bin/dmsh.exe ./cmd/dmsh"
 	powershell -Command "if (Test-Path '$(MINGW_BIN)/libstdc++-6.dll') { Copy-Item '$(MINGW_BIN)/libstdc++-6.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgcc_s_seh-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgomp-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libwinpthread-1.dll' bin/ -Force }"
 endif
 
 .PHONY: build-stub
 build-stub: ## Собрать бинарник без CGO/llama
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/nlsh ./cmd/nlsh
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/dmsh ./cmd/dmsh
 
 # Сборка для всех платформ (для локального создания релизов)
 .PHONY: build-all
@@ -123,59 +123,59 @@ build-windows: ## Собрать Windows-бинарник
 ifeq ($(IS_UNIX),1)
 ifneq ($(findstring CYGWIN,$(UNAME_S))$(findstring MSYS,$(UNAME_S)),)
 	mkdir -p bin
-	$(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-windows-amd64.exe ./cmd/nlsh
+	$(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh-windows-amd64.exe ./cmd/dmsh
 	@if [ -d "$(MINGW_BIN)" ]; then \
 		cp -f "$(MINGW_BIN)"/libstdc++-6.dll "$(MINGW_BIN)"/libgcc_s_seh-1.dll "$(MINGW_BIN)"/libgomp-1.dll "$(MINGW_BIN)"/libwinpthread-1.dll bin/ 2>/dev/null || true; \
 	fi
 else
 	@echo "Note: Cross-compiling Windows binary from standard Unix. Building stub."
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/nlsh-windows-amd64.exe ./cmd/nlsh
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/dmsh-windows-amd64.exe ./cmd/dmsh
 endif
 else
 	powershell -Command "if (-not (Test-Path bin)) { New-Item -ItemType Directory -Path bin }"
-	powershell -Command "go build -tags llama -ldflags '$(LDFLAGS)' -o bin/nlsh-windows-amd64.exe ./cmd/nlsh"
+	powershell -Command "go build -tags llama -ldflags '$(LDFLAGS)' -o bin/dmsh-windows-amd64.exe ./cmd/dmsh"
 	powershell -Command "if (Test-Path '$(MINGW_BIN)/libstdc++-6.dll') { Copy-Item '$(MINGW_BIN)/libstdc++-6.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgcc_s_seh-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgomp-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libwinpthread-1.dll' bin/ -Force }"
 endif
 
 .PHONY: build-linux
 build-linux: ## Собрать Linux-бинарник
 ifeq ($(shell uname -s 2>/dev/null),Linux)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-linux-amd64 ./cmd/nlsh
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh-linux-amd64 ./cmd/dmsh
 else
 	@echo "Note: CGO cross-compilation to Linux is only supported when building on Linux. Building stub instead."
 ifeq ($(IS_UNIX),1)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/nlsh-linux-amd64 ./cmd/nlsh
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/dmsh-linux-amd64 ./cmd/dmsh
 else
-	powershell -Command '$$env:GOOS="linux"; $$env:GOARCH="amd64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/nlsh-linux-amd64 ./cmd/nlsh'
+	powershell -Command '$$env:GOOS="linux"; $$env:GOARCH="amd64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/dmsh-linux-amd64 ./cmd/dmsh'
 endif
 endif
 
 .PHONY: build-macos
 build-macos: ## Собрать macOS-бинарники (amd64 + arm64)
 ifeq ($(shell uname -s 2>/dev/null),Darwin)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-amd64 ./cmd/nlsh
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-arm64 ./cmd/nlsh
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh-macos-amd64 ./cmd/dmsh
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh-macos-arm64 ./cmd/dmsh
 else
 	@echo "Note: CGO cross-compilation to macOS is only supported when building on macOS. Building stubs instead."
 ifeq ($(IS_UNIX),1)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-amd64 ./cmd/nlsh
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-arm64 ./cmd/nlsh
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/dmsh-macos-amd64 ./cmd/dmsh
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/dmsh-macos-arm64 ./cmd/dmsh
 else
-	powershell -Command '$$env:GOOS="darwin"; $$env:GOARCH="amd64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-amd64 ./cmd/nlsh'
-	powershell -Command '$$env:GOOS="darwin"; $$env:GOARCH="arm64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/nlsh-macos-arm64 ./cmd/nlsh'
+	powershell -Command '$$env:GOOS="darwin"; $$env:GOARCH="amd64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/dmsh-macos-amd64 ./cmd/dmsh'
+	powershell -Command '$$env:GOOS="darwin"; $$env:GOARCH="arm64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/dmsh-macos-arm64 ./cmd/dmsh'
 endif
 endif
 
 .PHONY: build-freebsd
 build-freebsd: ## Собрать FreeBSD-бинарник
 ifeq ($(shell uname -s 2>/dev/null),FreeBSD)
-	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/nlsh-freebsd-amd64 ./cmd/nlsh
+	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=1 CGO_CFLAGS="-I$(LLAMA_BUILD)/include" CGO_LDFLAGS="-L$(LLAMA_BUILD)/lib" $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh-freebsd-amd64 ./cmd/dmsh
 else
 	@echo "Note: CGO cross-compilation to FreeBSD is only supported when building on FreeBSD. Building stub instead."
 ifeq ($(IS_UNIX),1)
-	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/nlsh-freebsd-amd64 ./cmd/nlsh
+	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/dmsh-freebsd-amd64 ./cmd/dmsh
 else
-	powershell -Command '$$env:GOOS="freebsd"; $$env:GOARCH="amd64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/nlsh-freebsd-amd64 ./cmd/nlsh'
+	powershell -Command '$$env:GOOS="freebsd"; $$env:GOARCH="amd64"; $$env:CGO_ENABLED="0"; go build -ldflags "$(LDFLAGS)" -o bin/dmsh-freebsd-amd64 ./cmd/dmsh'
 endif
 endif
 
@@ -204,18 +204,18 @@ ifeq ($(IS_UNIX),1)
 		mkdir -p dist/deb/usr/bin; \
 		mkdir -p dist/deb/usr/share/man/man1; \
 		mkdir -p dist/deb/DEBIAN; \
-		cp bin/nlsh-linux-amd64 dist/deb/usr/bin/nlsh; \
+		cp bin/dmsh-linux-amd64 dist/deb/usr/bin/dmsh; \
 		cp man/* dist/deb/usr/share/man/man1/; \
-		echo "Package: nlsh" > dist/deb/DEBIAN/control; \
+		echo "Package: dmsh" > dist/deb/DEBIAN/control; \
 		echo "Version: $(VERSION)" >> dist/deb/DEBIAN/control; \
 		echo "Section: utils" >> dist/deb/DEBIAN/control; \
 		echo "Priority: optional" >> dist/deb/DEBIAN/control; \
 		echo "Architecture: amd64" >> dist/deb/DEBIAN/control; \
-		echo "Maintainer: dedomorozoff <alexl@nlsh>" >> dist/deb/DEBIAN/control; \
-		echo "Description: Natural Language Shell (nlsh)" >> dist/deb/DEBIAN/control; \
-		dpkg-deb --build dist/deb bin/nlsh-$(VERSION)-amd64.deb; \
+		echo "Maintainer: dedomorozoff <alexl@dmsh>" >> dist/deb/DEBIAN/control; \
+		echo "Description: Direct Model Shell (dmsh)" >> dist/deb/DEBIAN/control; \
+		dpkg-deb --build dist/deb bin/dmsh-$(VERSION)-amd64.deb; \
 		rm -rf dist/deb; \
-		echo "Debian package created: bin/nlsh-$(VERSION)-amd64.deb"; \
+		echo "Debian package created: bin/dmsh-$(VERSION)-amd64.deb"; \
 	else \
 		echo "dpkg-deb not found. Skipping deb creation."; \
 	fi
@@ -228,24 +228,24 @@ dist-rpm: build-linux gen-man ## Собрать .rpm пакет
 ifeq ($(IS_UNIX),1)
 	@if command -v rpmbuild >/dev/null 2>&1; then \
 		mkdir -p dist/rpmbuild/BUILD dist/rpmbuild/RPMS dist/rpmbuild/SOURCES dist/rpmbuild/SPECS dist/rpmbuild/SRPMS; \
-		cp bin/nlsh-linux-amd64 dist/rpmbuild/SOURCES/nlsh; \
+		cp bin/dmsh-linux-amd64 dist/rpmbuild/SOURCES/dmsh; \
 		cp -r man dist/rpmbuild/SOURCES/man; \
-		echo "Name:           nlsh" > dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "Version:        $(VERSION)" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "Release:        1%{?dist}" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "Summary: Natural Language Shell" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "License:        MIT" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "%description" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "Natural Language Shell" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "%install" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "mkdir -p %{buildroot}%{_bindir}" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "mkdir -p %{buildroot}%{_mandir}/man1" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "install -m 755 %{_sourcedir}/nlsh %{buildroot}%{_bindir}/nlsh" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "install -m 644 %{_sourcedir}/man/* %{buildroot}%{_mandir}/man1/" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "%files" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "%{_bindir}/nlsh" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		echo "%{_mandir}/man1/*" >> dist/rpmbuild/SPECS/nlsh.spec; \
-		rpmbuild --define "_topdir $$(pwd)/dist/rpmbuild" -bb dist/rpmbuild/SPECS/nlsh.spec; \
+		echo "Name:           dmsh" > dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "Version:        $(VERSION)" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "Release:        1%{?dist}" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "Summary: Direct Model Shell" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "License:        MIT" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "%description" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "Direct Model Shell" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "%install" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "mkdir -p %{buildroot}%{_bindir}" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "mkdir -p %{buildroot}%{_mandir}/man1" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "install -m 755 %{_sourcedir}/dmsh %{buildroot}%{_bindir}/dmsh" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "install -m 644 %{_sourcedir}/man/* %{buildroot}%{_mandir}/man1/" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "%files" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "%{_bindir}/dmsh" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		echo "%{_mandir}/man1/*" >> dist/rpmbuild/SPECS/dmsh.spec; \
+		rpmbuild --define "_topdir $$(pwd)/dist/rpmbuild" -bb dist/rpmbuild/SPECS/dmsh.spec; \
 		cp dist/rpmbuild/RPMS/*/*.rpm bin/; \
 		rm -rf dist/rpmbuild; \
 		echo "RPM package created in bin/"; \
@@ -261,16 +261,16 @@ dist-macos: build-macos gen-man ## Собрать tar.gz для macOS
 ifeq ($(IS_UNIX),1)
 	# Package for amd64
 	mkdir -p dist/macos-amd64/bin dist/macos-amd64/share/man/man1
-	cp bin/nlsh-macos-amd64 dist/macos-amd64/bin/nlsh
+	cp bin/dmsh-macos-amd64 dist/macos-amd64/bin/dmsh
 	cp man/* dist/macos-amd64/share/man/man1/
 	cp README.md dist/macos-amd64/
-	tar -czf bin/nlsh-$(VERSION)-darwin-amd64.tar.gz -C dist/macos-amd64 bin share README.md
+	tar -czf bin/dmsh-$(VERSION)-darwin-amd64.tar.gz -C dist/macos-amd64 bin share README.md
 	# Package for arm64
 	mkdir -p dist/macos-arm64/bin dist/macos-arm64/share/man/man1
-	cp bin/nlsh-macos-arm64 dist/macos-arm64/bin/nlsh
+	cp bin/dmsh-macos-arm64 dist/macos-arm64/bin/dmsh
 	cp man/* dist/macos-arm64/share/man/man1/
 	cp README.md dist/macos-arm64/
-	tar -czf bin/nlsh-$(VERSION)-darwin-arm64.tar.gz -C dist/macos-arm64 bin share README.md
+	tar -czf bin/dmsh-$(VERSION)-darwin-arm64.tar.gz -C dist/macos-arm64 bin share README.md
 	rm -rf dist
 	echo "macOS packages created in bin/"
 else
@@ -281,12 +281,12 @@ endif
 dist-freebsd: build-freebsd gen-man ## Собрать tar.gz для FreeBSD
 ifeq ($(IS_UNIX),1)
 	mkdir -p dist/freebsd-amd64/bin dist/freebsd-amd64/share/man/man1
-	cp bin/nlsh-freebsd-amd64 dist/freebsd-amd64/bin/nlsh
+	cp bin/dmsh-freebsd-amd64 dist/freebsd-amd64/bin/dmsh
 	cp man/* dist/freebsd-amd64/share/man/man1/
 	cp README.md dist/freebsd-amd64/
-	tar -czf bin/nlsh-$(VERSION)-freebsd-amd64.tar.gz -C dist/freebsd-amd64 bin share README.md
+	tar -czf bin/dmsh-$(VERSION)-freebsd-amd64.tar.gz -C dist/freebsd-amd64 bin share README.md
 	rm -rf dist
-	echo "FreeBSD package created: bin/nlsh-$(VERSION)-freebsd-amd64.tar.gz"
+	echo "FreeBSD package created: bin/dmsh-$(VERSION)-freebsd-amd64.tar.gz"
 else
 	@echo "FreeBSD packaging is only supported on Unix."
 endif
@@ -295,12 +295,12 @@ endif
 dist-linux-tar: build-linux gen-man ## Собрать tar.gz для Linux
 ifeq ($(IS_UNIX),1)
 	mkdir -p dist/linux-amd64/bin dist/linux-amd64/share/man/man1
-	cp bin/nlsh-linux-amd64 dist/linux-amd64/bin/nlsh
+	cp bin/dmsh-linux-amd64 dist/linux-amd64/bin/dmsh
 	cp man/* dist/linux-amd64/share/man/man1/
 	cp README.md dist/linux-amd64/
-	tar -czf bin/nlsh-$(VERSION)-linux-amd64.tar.gz -C dist/linux-amd64 bin share README.md
+	tar -czf bin/dmsh-$(VERSION)-linux-amd64.tar.gz -C dist/linux-amd64 bin share README.md
 	rm -rf dist
-	echo "Linux tarball created: bin/nlsh-$(VERSION)-linux-amd64.tar.gz"
+	echo "Linux tarball created: bin/dmsh-$(VERSION)-linux-amd64.tar.gz"
 else
 	@echo "Linux tarball packaging is only supported on Unix."
 endif
@@ -309,9 +309,9 @@ endif
 dist-arch: ## Собрать и установить пакет для Arch Linux (makepkg -si)
 	@if command -v makepkg >/dev/null 2>&1; then \
 		mkdir -p dist/arch; \
-		sed 's|git+https://github.com/dedomorozoff/nlsh.git#tag=v$$pkgver|git+file://$(CURDIR)#commit=$(shell git rev-parse HEAD)|' PKGBUILD > dist/arch/PKGBUILD; \
+		sed 's|git+https://github.com/dedomorozoff/dmsh.git#tag=v$$pkgver|git+file://$(CURDIR)#commit=$(shell git rev-parse HEAD)|' PKGBUILD > dist/arch/PKGBUILD; \
 		cd dist/arch && makepkg -si; \
-		echo "Пакет собран: $(CURDIR)/dist/arch/nlsh-*.pkg.tar.zst"; \
+		echo "Пакет собран: $(CURDIR)/dist/arch/dmsh-*.pkg.tar.zst"; \
 	else \
 		echo "makepkg not found. Install base-devel: sudo pacman -S base-devel"; \
 	fi
@@ -321,9 +321,9 @@ dist-windows: build-windows ## Собрать .zip для Windows
 ifeq ($(IS_UNIX),1)
 	# Package as zip
 	mkdir -p dist/windows-amd64
-	cp bin/nlsh-windows-amd64.exe dist/windows-amd64/nlsh.exe
+	cp bin/dmsh-windows-amd64.exe dist/windows-amd64/dmsh.exe
 	cp README.md dist/windows-amd64/
-		zip -r bin/nlsh-$(VERSION)-windows-amd64.zip dist/windows-amd64
+		zip -r bin/dmsh-$(VERSION)-windows-amd64.zip dist/windows-amd64
 	rm -rf dist
 	@if command -v iscc >/dev/null 2>&1; then \
 		iscc installer.iss; \
@@ -332,9 +332,9 @@ ifeq ($(IS_UNIX),1)
 	fi
 else
 	powershell -Command "if (-not (Test-Path dist)) { New-Item -ItemType Directory -Path dist }"
-	powershell -Command "Copy-Item bin/nlsh-windows-amd64.exe dist/nlsh.exe -Force"
+	powershell -Command "Copy-Item bin/dmsh-windows-amd64.exe dist/dmsh.exe -Force"
 	powershell -Command "Copy-Item README.md dist/README.md -Force"
-	powershell -Command "Remove-Item 'bin/nlsh-$(VERSION)-windows-amd64.zip' -Force -ErrorAction SilentlyContinue; tar -a -c -f bin/nlsh-$(VERSION)-windows-amd64.zip -C dist ."
+	powershell -Command "Remove-Item 'bin/dmsh-$(VERSION)-windows-amd64.zip' -Force -ErrorAction SilentlyContinue; tar -a -c -f bin/dmsh-$(VERSION)-windows-amd64.zip -C dist ."
 	powershell -Command "Remove-Item -Recurse -Force dist"
 	powershell -Command "if (Get-Command 'iscc' -ErrorAction SilentlyContinue) { iscc installer.iss } else { Write-Host 'iscc (Inno Setup) not found. Skipping GUI installer compilation.' -ForegroundColor Yellow }"
 endif

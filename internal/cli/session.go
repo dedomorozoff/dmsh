@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dedomorozoff/nlsh/internal/config"
-	"github.com/dedomorozoff/nlsh/internal/llm"
-	"github.com/dedomorozoff/nlsh/internal/model"
-	"github.com/dedomorozoff/nlsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/llm"
+	"github.com/dedomorozoff/dmsh/internal/model"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
 // HistoryEntry — запись в истории команд.
@@ -98,7 +98,7 @@ func resolveModelPath(cfg config.Config) (string, error) {
 		return d.ModelPath(all[0].Name), nil
 	}
 
-	return "", errors.New("model not found, run: nlsh model")
+	return "", errors.New("model not found, run: dmsh model")
 }
 
 func (s *session) close() {
@@ -214,7 +214,7 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 		errCh <- s.engine.Stream(ctx, system, user, opts, tokens)
 	}()
 
-	fmt.Fprintf(out, "%s[nlsh]%s ", cyan, reset)
+	fmt.Fprintf(out, "%s[dmsh]%s ", cyan, reset)
 
 	var raw strings.Builder
 	printedCounts := make(map[string]int)

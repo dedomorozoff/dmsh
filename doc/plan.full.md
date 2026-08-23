@@ -3,7 +3,7 @@ name: Go NL Shell Roadmap
 overview: Построить Linux-first shell на Go с общением на естественном языке и локальной легковесной LLM через прямую CGO-интеграцию с llama.cpp (без HTTP), начиная с безопасного MVP и постепенного усиления качества понимания, контекста и UX.
 todos:
   - id: scaffold-cli
-    content: Создать Go CLI каркас (ask/run/repl) и конфиг nlsh
+    content: Создать Go CLI каркас (ask/run/repl) и конфиг dmsh
     status: completed
   - id: cgo-build
     content: Подготовить CGO-сборку llama.cpp (vendored сабмодуль, CFLAGS/LDFLAGS, build tags)
@@ -32,7 +32,7 @@ isProject: false
 - Сделать CLI-shell, где пользователь пишет обычным языком, а система предлагает/выполняет команды.
 - Linux-first: поддержка bash/zsh окружения, POSIX-команд и пайпов.
 - LLM локально через `llama.cpp`, встроенный напрямую в бинарь через CGO (без HTTP, без сабпроцессов).
-- Один self-contained бинарь `nlsh` + GGUF файл модели на диске.
+- Один self-contained бинарь `dmsh` + GGUF файл модели на диске.
 - Режимы работы MVP:
   - `ask`: только объяснение/совет, без выполнения.
   - `suggest`: генерирует команду и просит подтверждение.
@@ -80,7 +80,7 @@ flowchart TD
 
 ## 4) Технологический стек Go
 - CLI framework: `cobra` (команды, флаги, help).
-- Конфиг: `viper` или минимально `encoding/json` + `~/.config/nlsh/config.json`.
+- Конфиг: `viper` или минимально `encoding/json` + `~/.config/dmsh/config.json`.
 - Логирование: `slog`.
 - TUI/интерактив (этап 2): `bubbletea` + `lipgloss` (не обязательно в MVP).
 - Тесты: `testing` + golden tests для prompt/response parsing.
@@ -103,11 +103,11 @@ flowchart TD
 ## 5) Пошаговая реализация
 
 ### Этап A — Bootstrapping и CGO (2-3 дня)
-- Инициализировать Go модуль, базовую CLI-команду `nlsh`.
+- Инициализировать Go модуль, базовую CLI-команду `dmsh`.
 - Добавить подкоманды:
-  - `nlsh ask "..."`
-  - `nlsh run "..."`
-  - `nlsh repl`
+  - `dmsh ask "..."`
+  - `dmsh run "..."`
+  - `dmsh repl`
 - Подключить `llama.cpp` как submodule, написать `Makefile` для сборки статической библиотеки.
 - Реализовать минимальную CGO-обёртку в `internal/llm`:
   - `Engine.Load(modelPath, params)` -> `llama_model_load_from_file` + `llama_new_context_with_model`.

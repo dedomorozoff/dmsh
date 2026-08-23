@@ -8,14 +8,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dedomorozoff/nlsh/internal/executor"
-	"github.com/dedomorozoff/nlsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/executor"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
 // runOneShot обрабатывает одиночный запрос без подкоманды:
-// nlsh "покажи последние 20 строк лога"
-// Поддерживает pipe: cat error.log | nlsh "что здесь не так?"
+// dmsh "покажи последние 20 строк лога"
+// Поддерживает pipe: cat error.log | dmsh "что здесь не так?"
 func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	s, err := newSession(rf.cfg)
 	if err != nil {

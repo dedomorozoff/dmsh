@@ -1,4 +1,4 @@
-# План реализации `nlsh`
+# План реализации `dmsh`
 
 ## Цель
 Собрать Linux-first shell на Go, где пользователь пишет на человеческом языке, а локальная LLM через `llama.cpp` (CGO, без HTTP) предлагает и безопасно запускает команды.
@@ -14,7 +14,7 @@
 
 ## Реализованные блоки
 - CLI: `ask`, `run`, `repl`, `version`.
-- Конфиг: загрузка из `~/.config/nlsh/config.json` + флаги запуска.
+- Конфиг: загрузка из `~/.config/dmsh/config.json` + флаги запуска.
 - Контракт LLM: строгий JSON + retry repair при невалидном ответе.
 - Safety policy: deny/suspicious правила, confirm flow, `dry-run` по умолчанию.
 - Исполнитель: запуск shell-команд через `exec.CommandContext`.
