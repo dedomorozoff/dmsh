@@ -94,7 +94,8 @@ History is stored alongside (`history.jsonl`).
 
 ## REPL
 
-Start with `dmsh repl`. Three modes:
+Start with `dmsh repl`. The interface is a full-screen Bubble Tea TUI
+with scrollback, live streaming and a status line. Three modes:
 
 - **AI** (default) — generates commands and executes them automatically
   after the safety check; anything non-trivial asks for confirmation.
@@ -125,8 +126,23 @@ Switch with `/mode ai|help|shell`, `/mode 1|2|3` or `/1`, `/2`, `/3`.
 Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 `cd`, `which` work too, without the slash.
 
-Bash-like keybindings are supported: `Ctrl+A/E/U/K/L/R/S/P/N`, `Ctrl+W`,
-`Alt+B/F/D`. `Ctrl+C` interrupts the current operation, `Ctrl+D` exits.
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| `F1` / `/help` | show help |
+| `Esc` / `Ctrl+C` | cancel / stop streaming |
+| `Ctrl+A/E/U/K` | start/end/delete-to-start/delete-to-end of line |
+| `Ctrl+R/S` | history search |
+| `Ctrl+P/N` | previous / next history entry |
+| `Alt+B/F/D` | move / delete by word |
+| `Ctrl+W` | delete word back |
+| `Ctrl+L` | clear screen |
+| `Ctrl+O` | model menu (install / switch model) |
+| `Tab` | complete slash command |
+| `↑/↓` | history or scroll (when input is empty) |
+| `PgUp/PgDn` | scroll output |
+| `/1`, `/2`, `/3` | switch AI / Help / Shell mode |
 
 ## Other commands
 
@@ -198,7 +214,7 @@ See `make help` for flags and details.
 
 ```
 cmd/dmsh/               CLI entry point
-internal/cli/           cobra commands, REPL
+internal/cli/           cobra commands, Bubble Tea TUI
 internal/llm/           CGO wrapper over llama.cpp
 internal/prompt/        system prompt + JSON contract
 internal/policy/        safety gate (denylist + risk scoring)
