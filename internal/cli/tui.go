@@ -48,6 +48,7 @@ type tuiModel struct {
 	state        tuiState
 	streaming    bool
 	streamed     bool
+	streamHasContent bool
 	streamCtx    context.Context
 	streamCancel context.CancelFunc
 	tokenCh      chan tokenMsg
@@ -179,6 +180,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tokenMsg:
 		if len(msg.text) > 0 {
 			m.streamed = true
+			m.streamHasContent = true
 			m.content = appendStream(m.content, msg.text)
 		}
 		if m.streaming && m.tokenCh != nil {
@@ -187,6 +189,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case streamDoneMsg:
 		m.streaming = false
+		m.streamed = false
+		m.streamHasContent = false
 		m.state = tuiIdle
 		m.tokenCh = nil
 		m.streamDone = nil
@@ -358,7 +362,7 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 		inRows = m.menuRows()
 	} else if m.state != tuiConfirming && m.state != tuiSearch {
 		inRows = hardWrap(m.buildPrompt()+m.input, m.width)
-		if m.streaming && !m.streamed {
+		if m.streaming {
 			inRows = hardWrap(fmt.Sprintf("%s[dmsh] thinking…%s", colorCyan, colorReset), m.width)
 		}
 		// Slash-command menu with descriptions while typing "/".
@@ -910,6 +914,7 @@ func (m tuiModel) startLLMStream(mode, input string) (tuiModel, tea.Cmd) {
 	m.streamDone = doneCh
 	m.streaming = true
 	m.streamed = false
+	m.streamHasContent = false
 	m.state = tuiStreaming
 
 	var buf strings.Builder
@@ -960,6 +965,8 @@ func (m tuiModel) executeResponse(resp prompt.Response) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
+	m.addLine(fmt.Sprintf("\n%s$ %s%s", colorCyan, resp.Command, colorReset))
+	m.addLine(fmt.Sprintf("%s%s%s", gray, strings.Repeat("─", 40), colorReset))
 	if handled, shouldExit, err := runBuiltin(resp.Command, io.Discard, io.Discard, m.s.recent); handled {
 		if err != nil {
 			m.addLine(fmt.Sprintf("%s%s%s", colorRed, err, colorReset))

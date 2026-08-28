@@ -290,11 +290,15 @@ func TestThinkingIndicatorWhileStreaming(t *testing.T) {
 	m.streamed = false
 	out := m.render()
 	if !strings.Contains(out, "thinking") {
-		t.Fatalf("streaming w/o tokens should show a thinking indicator:\n%s", out)
+		t.Fatalf("streaming should show a thinking indicator:\n%s", out)
 	}
 	m.streamed = true
-	if out2 := m.render(); strings.Contains(out2, "thinking") {
-		t.Fatalf("thinking indicator must vanish once tokens arrive:\n%s", out2)
+	if out2 := m.render(); !strings.Contains(out2, "thinking") {
+		t.Fatalf("thinking indicator must persist while tokens are streaming:\n%s", out2)
+	}
+	m.streaming = false
+	if out3 := m.render(); strings.Contains(out3, "thinking") {
+		t.Fatalf("thinking indicator must vanish once streaming ends:\n%s", out3)
 	}
 }
 
