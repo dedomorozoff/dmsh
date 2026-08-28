@@ -307,6 +307,9 @@ func (m tuiModel) View() tea.View {
 	}
 
 	v.Cursor = &tea.Cursor{Position: tea.Position{X: col, Y: y}, Shape: tea.CursorBlock, Blink: true}
+	if m.state == tuiStreaming {
+		v.Cursor = nil
+	}
 	return v
 }
 
@@ -1239,6 +1242,7 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/model%s       — current model", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+O%s       — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/bind%s        — key bindings", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/help%s        — this info", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/exit%s        — exit", colorYellow, colorReset))
@@ -1253,7 +1257,7 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sAlt+B/F/D%s      — word back/forward/delete", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+W%s         — delete word back", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+L%s         — clear screen", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+O%s         — model menu", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+O%s         — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sTab%s            — complete slash command", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s↑/↓%s            — choose from / menu", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/1%s %s/2%s %s/3%s — AI / Help / Shell mode", colorYellow, colorReset, colorYellow, colorReset, colorYellow, colorReset))
