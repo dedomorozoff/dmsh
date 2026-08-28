@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -587,5 +588,92 @@ func TestSessionSwitchModelSwapsEngine(t *testing.T) {
 	}
 	if _, ok := s.engine.(*captureEngine); ok {
 		t.Fatal("old engine should have been replaced")
+	}
+}
+
+func TestScrollUpDownWhenInputEmpty(t *testing.T) {
+	m := newTestTui()
+	m.width = 80
+	m.height = 10
+	for i := 0; i < 50; i++ {
+		m.addLine(fmt.Sprintf("line %02d", i))
+	}
+	if m.scrollOffset != 0 {
+		t.Fatalf("initial scrollOffset = %d, want 0", m.scrollOffset)
+	}
+	m.scrollUp()
+	if m.scrollOffset != 1 {
+		t.Fatalf("scrollUp once: scrollOffset = %d, want 1", m.scrollOffset)
+	}
+	m.scrollDown()
+	if m.scrollOffset != 0 {
+		t.Fatalf("scrollDown after scrollUp: scrollOffset = %d, want 0", m.scrollOffset)
+	}
+	m.scrollDown()
+	if m.scrollOffset != 0 {
+		t.Fatalf("scrollDown at bottom: scrollOffset = %d, want 0", m.scrollOffset)
+	}
+	for i := 0; i < 20; i++ {
+		m.scrollUp()
+	}
+	if m.scrollOffset != 20 {
+		t.Fatalf("scrollUp 20 times: scrollOffset = %d, want 20", m.scrollOffset)
+	}
+}
+
+func TestScrollPgUpPgDown(t *testing.T) {
+	m := newTestTui()
+	m.width = 80
+	m.height = 10
+	for i := 0; i < 100; i++ {
+		m.addLine(fmt.Sprintf("line %03d", i))
+	}
+	// Scroll to near the top first.
+	m.scrollOffset = 90
+	// PgUp should move up.
+	m.scrollBy(-(m.height - 3))
+	if m.scrollOffset >= 90 {
+		t.Fatalf("scrollBy PgUp: scrollOffset = %d, want < 90", m.scrollOffset)
+	}
+	// PgDown should move back down.
+	m.scrollBy(m.height - 3)
+	if m.scrollOffset != 90 {
+		t.Fatalf("scrollBy PgDown back: scrollOffset = %d, want 90", m.scrollOffset)
+	}
+}
+
+func TestScrollKeyWhenInputHasTextFallsBackToHistory(t *testing.T) {
+	m := newTestTui()
+	m.input = "hello"
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.input != "hello" {
+		t.Fatalf("input changed while typing: %q", m.input)
+	}
+	if m.scrollOffset != 0 {
+		t.Fatalf("scrollOffset changed while typing: %d", m.scrollOffset)
+	}
+}
+
+func TestRenderScrollShowsHistory(t *testing.T) {
+	m := newTestTui()
+	m.width = 80
+	m.height = 20
+	for i := 0; i < 30; i++ {
+		m.addLine(fmt.Sprintf("line %02d", i))
+	}
+	out := m.render()
+	if !strings.Contains(out, "line 29") {
+		t.Fatalf("render without scroll should show most recent lines:\n%s", out)
+	}
+	if strings.Contains(out, "line 05") {
+		t.Fatalf("render without scroll should not show oldest lines when content overflows:\n%s", out)
+	}
+	m.scrollOffset = 10
+	out = m.render()
+	if strings.Contains(out, "line 29") {
+		t.Fatalf("scrolled render should not show newest line when scrolled up:\n%s", out)
+	}
+	if !strings.Contains(out, "line 05") || !strings.Contains(out, "line 06") {
+		t.Fatalf("scrolled render should show older lines:\n%s", out)
 	}
 }

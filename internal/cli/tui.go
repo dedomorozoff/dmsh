@@ -73,6 +73,8 @@ type tuiModel struct {
 	modelCancel   context.CancelFunc
 	modelCh       chan modelProgMsg
 	modelDoneCh   chan modelDoneMsg
+
+	scrollOffset int
 }
 
 // slashCommands — commands offered by Tab completion and the "/" menu.
@@ -182,6 +184,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamed = true
 			m.streamHasContent = true
 			m.content = appendStream(m.content, msg.text)
+			m.scrollOffset = 0
 		}
 		if m.streaming && m.tokenCh != nil {
 			return m, waitForToken(m.tokenCh, m.streamDone)
@@ -410,7 +413,6 @@ func (m tuiModel) inputRow() int {
 }
 
 func (m tuiModel) render() string {
-	// Scrollback region: conversation history plus any question/confirm line.
 	bodyLines, inLines := m.layoutRows()
 	status := fitWidth(m.statusline(), m.width)
 
@@ -418,18 +420,35 @@ func (m tuiModel) render() string {
 		return strings.Join(append(bodyLines, inLines...), "\n")
 	}
 
-	// Reserve the last row for the status line; the input rows float just
-	// above it. Scroll the history so the newest lines stay visible.
 	avail := m.height - 1 - len(inLines)
 	if avail < 0 {
 		avail = 0
 	}
-	if len(bodyLines) > avail {
-		bodyLines = bodyLines[len(bodyLines)-avail:]
+
+	total := len(bodyLines)
+	maxOffset := total - avail
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
 	}
 
+	start := total - avail - m.scrollOffset
+	if start < 0 {
+		start = 0
+	}
+	end := start + avail
+	if end > total {
+		end = total
+	}
+	visible := bodyLines[start:end]
+
 	frame := make([]string, 0, m.height)
-	frame = append(frame, bodyLines...)
+	frame = append(frame, visible...)
 	frame = append(frame, inLines...)
 	for len(frame) < m.height-1 {
 		frame = append(frame, "")
@@ -493,6 +512,24 @@ func (m *tuiModel) addLine(text string) {
 
 func (m *tuiModel) clearContent() {
 	m.content = ""
+	m.scrollOffset = 0
+}
+
+func (m *tuiModel) scrollUp() {
+	m.scrollOffset++
+}
+
+func (m *tuiModel) scrollDown() {
+	if m.scrollOffset > 0 {
+		m.scrollOffset--
+	}
+}
+
+func (m *tuiModel) scrollBy(delta int) {
+	m.scrollOffset += delta
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
 }
 
 func appendLine(content, text string) string {
@@ -572,12 +609,30 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.menuSelect(-1) {
 			return m, nil
 		}
+		if m.input == "" {
+			m.scrollUp()
+			return m, nil
+		}
 		return m.handleHistoryPrev()
 	case tea.KeyDown:
 		if m.menuSelect(1) {
 			return m, nil
 		}
+		if m.input == "" {
+			m.scrollUp()
+			return m, nil
+		}
 		return m.handleHistoryNext()
+	case tea.KeyPgUp:
+		if m.input == "" {
+			m.scrollBy(-(m.height - 3))
+			return m, nil
+		}
+	case tea.KeyPgDown:
+		if m.input == "" {
+			m.scrollBy(m.height - 3)
+			return m, nil
+		}
 	}
 	switch msg.Keystroke() {
 	case "ctrl+a":
@@ -1260,7 +1315,8 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sCtrl+L%s         — clear screen", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+O%s         — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sTab%s            — complete slash command", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s↑/↓%s            — choose from / menu", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s↑/↓%s            — history / scroll", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sPgUp/PgDn%s      — scroll output", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/1%s %s/2%s %s/3%s — AI / Help / Shell mode", colorYellow, colorReset, colorYellow, colorReset, colorYellow, colorReset))
 }
 
