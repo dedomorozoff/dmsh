@@ -1004,6 +1004,7 @@ func (m tuiModel) autoCorrect(resp prompt.Response, res executor.Result) (tuiMod
 		stderr = res.Err.Error()
 	}
 	m.addLine(fmt.Sprintf("\n%s[dmsh]%s Error detected (code %d). Requesting auto-correction from LLM...%s", colorYellow, colorReset, res.ExitCode, colorReset))
+	m.addLine(fmt.Sprintf("%s%s%s", gray, strings.Repeat("─", 40), colorReset))
 	m.s.stats.ErrorsFix++
 	correctionInput := fmt.Sprintf("Command '%s' failed.\nExit code: %d\nStderr:\n%s\n\nPlease fix the command so it runs successfully on the current OS.", resp.Command, res.ExitCode, stderr)
 	return m.startLLMStream("run", correctionInput)

@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"charm.land/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -12,11 +12,9 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	errOut := cmd.ErrOrStderr()
 
 	fmt.Fprintln(out, "╔══════════════════════════════════════════╗")
-	fmt.Fprintln(out, "║          .dmsh — Natural Shell           ║")
+	fmt.Fprintln(out, "║      dmsh — Direct Model Shell           ║")
 	fmt.Fprintln(out, "║   Type commands in natural language      ║")
 	fmt.Fprintln(out, "║   Example: show me all files             ║")
-	fmt.Fprintln(out, "║   Commands: /stats /model /retry         ║")
-	fmt.Fprintln(out, "║   /export /alias /bind                   ║")
 	fmt.Fprintln(out, "║   Type /help for commands.               ║")
 	fmt.Fprintln(out, "╚══════════════════════════════════════════╝")
 	fmt.Fprintln(out, "")
