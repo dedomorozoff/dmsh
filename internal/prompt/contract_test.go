@@ -72,6 +72,55 @@ func TestValidate_UnknownIntent(t *testing.T) {
 	}
 }
 
+func TestValidate_InfersIntentFromFields(t *testing.T) {
+	cases := []struct {
+		name string
+		resp Response
+		want Intent
+	}{
+		{"command", Response{Command: "ls"}, IntentRunCommand},
+		{"question", Response{Question: "which dir?"}, IntentAskClarification},
+		{"explanation", Response{Explanation: "explains"}, IntentExplain},
+	}
+	for _, tc := range cases {
+		if err := tc.resp.Validate(); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if tc.resp.Intent != tc.want {
+			t.Fatalf("%s: intent = %q, want %q", tc.name, tc.resp.Intent, tc.want)
+		}
+	}
+}
+
+func TestValidate_EmptyEverythingStillErrors(t *testing.T) {
+	r := Response{}
+	if err := r.Validate(); err == nil {
+		t.Fatal("expected error for an entirely empty response")
+	}
+}
+
+func TestParse_MissingIntentInfersRunCommand(t *testing.T) {
+	raw := `{"command":"ls -la","explanation":"list files","risk_level":"low"}`
+	r, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if r.Intent != IntentRunCommand || r.Command != "ls -la" {
+		t.Fatalf("bad parse: %+v", r)
+	}
+}
+
+func TestParse_MissingIntentInfersClarification(t *testing.T) {
+	raw := `{"question":"which directory?"}`
+	r, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if r.Intent != IntentAskClarification || r.Question != "which directory?" {
+		t.Fatalf("bad parse: %+v", r)
+	}
+}
+
 func TestParse_FallbackParser(t *testing.T) {
 	// Case 1: Trailing comma (invalid JSON, but captured by fallback)
 	rawTrailing := `{

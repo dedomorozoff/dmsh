@@ -1,13 +1,12 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 
+	"charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 )
 
-// runInteractive запускает REPL как дефолтное поведение root-команды.
 func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
@@ -24,23 +23,18 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 
 	s, err := newSession(rf.cfg)
 	if err != nil {
-		fmt.Fprintln(errOut, "")
-		fmt.Fprintf(errOut, "  ✗ Model error: %v\n", err)
-		fmt.Fprintln(errOut, "  → Run: dmsh model")
+		fmt.Fprintf(errOut, "%sModel error: %v%s\n", colorRed, err, colorReset)
+		fmt.Fprintln(errOut, "Run: dmsh model")
 		fmt.Fprintln(errOut, "")
 		return err
 	}
 	defer s.close()
 
-	in := cmd.InOrStdin()
-
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
+	m := NewTuiModel(rf, s)
+	p := tea.NewProgram(m)
+	_, err = p.Run()
+	if errOut != nil && err != nil {
+		fmt.Fprintf(errOut, "%s%s\n", colorRed, err)
 	}
-
-	if isTTY := isTerminal(in); isTTY {
-		return replLoopReadline(ctx, s, rf, out, errOut)
-	}
-	return replLoop(ctx, s, rf, in, out, errOut)
+	return err
 }

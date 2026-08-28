@@ -109,6 +109,27 @@ func (s *session) close() {
 	_ = s.saveHistory()
 }
 
+// switchModel заменяет загруженную модель на лету. При ошибке загрузки
+// старая модель остаётся на месте и продолжает работать.
+func (s *session) switchModel(path string) error {
+	if s.engine == nil {
+		return errors.New("no engine loaded")
+	}
+	eng, err := llm.New(llm.Params{
+		ModelPath: path,
+		Threads:   s.cfg.Threads,
+		CtxSize:   s.cfg.CtxSize,
+		GPULayers: s.cfg.GPULayers,
+	})
+	if err != nil {
+		return fmt.Errorf("load model: %w", err)
+	}
+	_ = s.engine.Close()
+	s.engine = eng
+	s.cfg.ModelPath = path
+	return nil
+}
+
 // SetInput sets the line reader for interactive prompts.
 func (s *session) SetInput(r LineReader) {
 	s.input = r
@@ -219,7 +240,10 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	var raw strings.Builder
 	printedCounts := make(map[string]int)
 	headersPrinted := make(map[string]bool)
-	keys := []string{"command", "explanation", "question"}
+	// Question is deliberately not printed here: a clarification is shown by
+	// the interactive question flow (TUI / REPL), printing it again would
+	// duplicate the text.
+	keys := []string{"command", "explanation"}
 
 	for tok := range tokens {
 		raw.WriteString(tok)
@@ -284,15 +308,18 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 		return prompt.Response{}, rawStr + "\n---\n" + raw2, fmt.Errorf("failed to parse model response: %w", perr2)
 	}
 
-	// Выводим восстановленный ответ, так как он не стримился
-	if resp2.Command != "" {
-		fmt.Fprintf(out, "\n\033[36mCommand:\033[0m %s\n", resp2.Command)
-	}
-	if resp2.Explanation != "" {
-		fmt.Fprintf(out, "\n\033[32mExplanation:\033[0m %s\n", resp2.Explanation)
-	}
-	if resp2.Question != "" {
-		fmt.Fprintf(out, "\n\033[33mQuestion:\033[0m %s\n", resp2.Question)
+	// Поля первого ответа уже были отрисованы при стриминге, поэтому не
+	// дублируем их. Если ремонт вернул контент там, где стрим был пуст,
+	// печатаем только его.
+	if printedCounts["command"] == 0 && printedCounts["explanation"] == 0 {
+		if resp2.Command != "" {
+			fmt.Fprintf(out, "\n\033[36mCommand:\033[0m %s\n", resp2.Command)
+		}
+		if resp2.Explanation != "" {
+			fmt.Fprintf(out, "\n\033[32mExplanation:\033[0m %s\n", resp2.Explanation)
+		}
+	} else {
+		fmt.Fprintf(out, "%s(reformatted)%s\n", gray, reset)
 	}
 
 	return resp2, raw2, nil

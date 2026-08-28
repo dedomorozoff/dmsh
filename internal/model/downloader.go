@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -149,6 +150,10 @@ func (d *Downloader) EnsureDir() error {
 }
 
 func (d *Downloader) DownloadURL(url string, progress func(dl int, total int)) (string, error) {
+	return d.DownloadURLCtx(context.Background(), url, progress)
+}
+
+func (d *Downloader) DownloadURLCtx(ctx context.Context, url string, progress func(dl int, total int)) (string, error) {
 	if err := d.EnsureDir(); err != nil {
 		return "", fmt.Errorf("create model dir: %w", err)
 	}
@@ -164,7 +169,7 @@ func (d *Downloader) DownloadURL(url string, progress func(dl int, total int)) (
 	}
 
 	tmpPath := destPath + ".tmp"
-	if err := d.downloadFile(url, tmpPath, progress); err != nil {
+	if err := d.downloadFile(ctx, url, tmpPath, progress); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("download %s: %w", name, err)
 	}
@@ -177,6 +182,12 @@ func (d *Downloader) DownloadURL(url string, progress func(dl int, total int)) (
 }
 
 func (d *Downloader) Download(info ModelInfo, progress func(dl int, total int)) (string, error) {
+	return d.DownloadCtx(context.Background(), info, progress)
+}
+
+// DownloadCtx скачивает файл, прерываясь при отмене ctx. Временный файл
+// удаляется при ошибке или отмене.
+func (d *Downloader) DownloadCtx(ctx context.Context, info ModelInfo, progress func(dl int, total int)) (string, error) {
 	if err := d.EnsureDir(); err != nil {
 		return "", fmt.Errorf("create model dir: %w", err)
 	}
@@ -187,7 +198,7 @@ func (d *Downloader) Download(info ModelInfo, progress func(dl int, total int)) 
 	}
 
 	tmpPath := destPath + ".tmp"
-	if err := d.downloadFile(info.URL, tmpPath, progress); err != nil {
+	if err := d.downloadFile(ctx, info.URL, tmpPath, progress); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("download %s: %w", info.Name, err)
 	}
@@ -199,8 +210,12 @@ func (d *Downloader) Download(info ModelInfo, progress func(dl int, total int)) 
 	return destPath, nil
 }
 
-func (d *Downloader) downloadFile(url, destPath string, progress func(dl, total int)) error {
-	resp, err := d.client.Get(url)
+func (d *Downloader) downloadFile(ctx context.Context, url, destPath string, progress func(dl, total int)) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	resp, err := d.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", url, err)
 	}

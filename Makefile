@@ -106,7 +106,7 @@ ifeq ($(IS_UNIX),1)
 	$(GO) build $(GOFLAGS) -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh ./cmd/dmsh
 else
 	powershell -Command "if (-not (Test-Path bin)) { New-Item -ItemType Directory -Path bin }"
-	powershell -Command "go build -tags llama -ldflags '$(LDFLAGS)' -o bin/dmsh.exe ./cmd/dmsh"
+	go build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh.exe ./cmd/dmsh
 	powershell -Command "if (Test-Path '$(MINGW_BIN)/libstdc++-6.dll') { Copy-Item '$(MINGW_BIN)/libstdc++-6.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgcc_s_seh-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgomp-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libwinpthread-1.dll' bin/ -Force }"
 endif
 

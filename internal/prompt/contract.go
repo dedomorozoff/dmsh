@@ -39,6 +39,18 @@ type Response struct {
 
 // Validate проверяет внутреннюю согласованность ответа и нормализует поля.
 func (r *Response) Validate() error {
+	// Some models omit "intent" despite the schema. Infer it from the fields
+	// so the response is still actionable instead of being rejected.
+	if r.Intent == "" {
+		switch {
+		case strings.TrimSpace(r.Command) != "":
+			r.Intent = IntentRunCommand
+		case strings.TrimSpace(r.Question) != "":
+			r.Intent = IntentAskClarification
+		case strings.TrimSpace(r.Explanation) != "":
+			r.Intent = IntentExplain
+		}
+	}
 	switch r.Intent {
 	case IntentRunCommand:
 		if strings.TrimSpace(r.Command) == "" {
