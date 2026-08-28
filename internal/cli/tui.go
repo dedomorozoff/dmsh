@@ -562,7 +562,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleModelMenuKey(msg)
 	}
 	if m.streaming {
-		if msg.String() == "ctrl+c" {
+		if msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" {
 			if m.streamCancel != nil {
 				m.streamCancel()
 				m.streamCancel = nil
@@ -1074,7 +1074,7 @@ func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n", "N", "no", "enter":
 		confirmed = false
 		m.state = tuiIdle
-	case "ctrl+c":
+	case "ctrl+c", "esc":
 		confirmed = false
 		m.state = tuiIdle
 		m.input = ""
@@ -1307,6 +1307,7 @@ func (m *tuiModel) showHelp() {
 func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("%s=== Key Bindings ===%s", colorBold+colorCyan, colorReset))
 	m.addLine(fmt.Sprintf("  %sF1%s / %s/help%s    — this info", colorYellow, colorReset, colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sEsc%s / %sCtrl+C%s — cancel / stop", colorYellow, colorReset, colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+A/E/U/K%s   — start/end/delete-to-start/delete-to-end", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+R/S%s       — history search", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+P/N%s       — prev/next history", colorYellow, colorReset))
