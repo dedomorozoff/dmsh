@@ -13,7 +13,7 @@ url="https://github.com/dedomorozoff/dmsh"
 license=('MIT')
 depends=('gcc-libs' 'glibc')
 source=('dmsh' 'man.tar.gz')
-sha256sums=('SKIP')
+sha256sums=('SKIP' 'SKIP')
 
 package() {
   cd "$srcdir"
