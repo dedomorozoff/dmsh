@@ -1,0 +1,22 @@
+# Prebuilt-binary PKGBUILD used by the CI release workflow.
+# Assumes ./dmsh (the linux-amd64 binary) and ./man are present in the
+# package source dir. Replaces the build-from-source PKGBUILD in CI so the
+# Arch package can be assembled from the already-built binary without a full
+# llama.cpp rebuild inside the container.
+
+pkgname=dmsh
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Direct Model Shell - run shell commands in natural language via a local LLM"
+arch=('x86_64')
+url="https://github.com/dedomorozoff/dmsh"
+license=('MIT')
+depends=('gcc-libs' 'glibc')
+source=('dmsh' 'man/')
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir"
+  install -Dm755 dmsh "$pkgdir/usr/bin/dmsh"
+  install -Dm644 man/* -t "$pkgdir/usr/share/man/man1"
+}

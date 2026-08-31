@@ -21,21 +21,25 @@ jobs:
             goarch: amd64
             ext: ""
             metal_flags: ""
-          - os: macos-13
+            cmake_arch: ""
+          - os: macos-latest
             goos: darwin
             goarch: amd64
             ext: ""
             metal_flags: "-DGGML_METAL=OFF -DGGML_BLAS=OFF"
+            cmake_arch: "-DCMAKE_OSX_ARCHITECTURES=x86_64"
           - os: macos-latest
             goos: darwin
             goarch: arm64
             ext: ""
             metal_flags: "-DGGML_METAL=OFF -DGGML_BLAS=OFF"
+            cmake_arch: "-DCMAKE_OSX_ARCHITECTURES=arm64"
           - os: windows-latest
             goos: windows
             goarch: amd64
             ext: ".exe"
             metal_flags: ""
+            cmake_arch: ""
 
     steps:
       - uses: actions/checkout@v5
@@ -59,7 +63,7 @@ jobs:
 
       - name: Build llama.cpp
         run: |
-          cmake -G "Unix Makefiles" -S third_party/llama.cpp -B third_party/llama.cpp/build -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release ${{ matrix.metal_flags }}
+          cmake -G "Unix Makefiles" -S third_party/llama.cpp -B third_party/llama.cpp/build -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release ${{ matrix.metal_flags }} ${{ matrix.cmake_arch }}
           cmake --build third_party/llama.cpp/build --config Release --parallel 2
 
       - name: Build dmsh
@@ -85,8 +89,123 @@ jobs:
           name: dmsh-${{ matrix.goos }}-${{ matrix.goarch }}
           path: bin/dmsh${{ matrix.ext }}
 
-  release:
+  package:
     needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: dmsh-linux-amd64
+          path: bin
+
+      - name: Move binary to expected name
+        run: mv bin/dmsh bin/dmsh-linux-amd64
+
+      - name: Build FreeBSD (stub) binary
+        run: |
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o bin/dmsh-freebsd-amd64 ./cmd/dmsh
+
+      - name: Generate man pages
+        run: go run ./cmd/genman
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev rpm
+
+      - name: Build .deb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/deb/usr/bin dist/deb/usr/share/man/man1 dist/deb/DEBIAN
+          cp bin/dmsh-linux-amd64 dist/deb/usr/bin/dmsh
+          cp man/* dist/deb/usr/share/man/man1/
+          cat > dist/deb/DEBIAN/control <<EOF
+          Package: dmsh
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: dedomorozoff <alexl@dmsh>
+          Description: Direct Model Shell (dmsh)
+          EOF
+          dpkg-deb --build dist/deb "bin/dmsh-${VERSION}-amd64.deb"
+
+      - name: Build .rpm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/rpmbuild/BUILD dist/rpmbuild/RPMS dist/rpmbuild/SOURCES dist/rpmbuild/SPECS dist/rpmbuild/SRPMS
+          cp bin/dmsh-linux-amd64 dist/rpmbuild/SOURCES/dmsh
+          cp -r man dist/rpmbuild/SOURCES/man
+          cat > dist/rpmbuild/SPECS/dmsh.spec <<EOF
+          Name: dmsh
+          Version: ${VERSION}
+          Release: 1%{?dist}
+          Summary: Direct Model Shell
+          License: MIT
+          %description
+          Direct Model Shell
+          %install
+          mkdir -p %{buildroot}%{_bindir} %{buildroot}%{_mandir}/man1
+          install -m 755 %{_sourcedir}/dmsh %{buildroot}%{_bindir}/dmsh
+          install -m 644 %{_sourcedir}/man/* %{buildroot}%{_mandir}/man1/
+          %files
+          %{_bindir}/dmsh
+          %{_mandir}/man1/*
+          EOF
+          rpmbuild --define "_topdir $(pwd)/dist/rpmbuild" -bb dist/rpmbuild/SPECS/dmsh.spec
+          cp dist/rpmbuild/RPMS/*/*.rpm bin/
+
+      - name: Build Linux tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/linux/bin dist/linux/share/man/man1
+          cp bin/dmsh-linux-amd64 dist/linux/bin/dmsh
+          cp man/* dist/linux/share/man/man1/
+          cp README.md dist/linux/
+          tar -czf "bin/dmsh-${VERSION}-linux-amd64.tar.gz" -C dist/linux bin share README.md
+
+      - name: Build FreeBSD tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/freebsd/bin dist/freebsd/share/man/man1
+          cp bin/dmsh-freebsd-amd64 dist/freebsd/bin/dmsh
+          cp man/* dist/freebsd/share/man/man1/
+          cp README.md dist/freebsd/
+          tar -czf "bin/dmsh-${VERSION}-freebsd-amd64.tar.gz" -C dist/freebsd bin share README.md
+
+      - name: Build Arch Linux package (makepkg)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed "s/@VERSION@/${VERSION}/" packaging/PKGBUILD.prebuilt > PKGBUILD.ci
+          docker run --rm -v "$(pwd)":/build -w /build archlinux/archlinux:latest bash -c \
+            "pacman -Syu --noconfirm --needed base-devel &&
+             useradd -m builder &&
+             chown -R builder /build &&
+             cp /build/bin/dmsh-linux-amd64 /build/dmsh &&
+             su builder -c 'cd /build && makepkg -p PKGBUILD.ci -f'"
+          cp *.pkg.tar.zst bin/
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmsh-packages
+          path: |
+            bin/dmsh-*.deb
+            bin/dmsh-*.rpm
+            bin/dmsh-*-linux-amd64.tar.gz
+            bin/dmsh-*-freebsd-amd64.tar.gz
+            bin/dmsh-*.pkg.tar.zst
+
+  release:
+    needs: [build, package]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
@@ -103,12 +222,14 @@ jobs:
           mkdir -p dist
           for dir in release/dmsh-*; do
             name=$(basename "$dir")
+            [[ "$name" == "dmsh-packages" ]] && continue
             if [[ "$name" == *"windows"* ]]; then
               cp "$dir/dmsh.exe" "dist/${name}.exe"
             else
               tar -czf "dist/${name}.tar.gz" -C "$dir" .
             fi
           done
+          cp release/dmsh-packages/* dist/ 2>/dev/null || true
           ls -la dist/
 
       - name: Create Release
