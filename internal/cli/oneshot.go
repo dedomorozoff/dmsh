@@ -22,6 +22,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		return err
 	}
 	defer s.close()
+	s.setAutoYes(rf.autoYes)
 
 	// Читаем stdin если он не TTY (pipe-режим)
 	stdin := cmd.InOrStdin()
@@ -66,8 +67,17 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "(command blocked by security policy)")
 		return nil
 	}
-	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		ok, err := confirm(s.input, cmd.OutOrStdout(), s, "execute?")
+	if rf.preview {
+		ok, err := previewAndConfirm(cmd.OutOrStdout(), s, resp.Command, dec.Risk)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
+			return nil
+		}
+	} else if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
+		ok, err := s.confirmOK(cmd.OutOrStdout(), "execute?")
 		if err != nil {
 			return err
 		}
@@ -86,6 +96,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 
 	res := executor.RunInteractive(ctx, rf.cfg.Shell, resp.Command)
 	s.addRecent(resp.Command)
+	s.audit(resp.Command, "llm", dec, res)
 	if res.Stdout != "" {
 		fmt.Fprint(cmd.OutOrStdout(), res.Stdout)
 	}

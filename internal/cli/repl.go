@@ -64,6 +64,8 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		fmt.Fprintln(out, wd)
 	case line == "/history", line == "history":
 		printHistoryLimit(out, cfg.HistoryFile, 20)
+	case line == "/audit":
+		printAuditLimit(out, cfg.AuditFile, 20)
 	case line == "/bind", line == "/bind keys":
 		showKeyBindings(out)
 	case line == "/stats":
@@ -134,6 +136,7 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, ou
 		}
 		res := executor.RunInteractive(ctx, rf.cfg.Shell, raw)
 		s.addRecentAndHistory(raw, "direct")
+		s.audit(raw, "direct", directDecision(), res)
 		if res.Stdout != "" {
 			fmt.Fprint(out, res.Stdout)
 		}
@@ -160,6 +163,7 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, ou
 		}
 		res := executor.RunInteractive(ctx, rf.cfg.Shell, input)
 		s.addRecentAndHistory(input, "direct")
+		s.audit(input, "direct", directDecision(), res)
 		if res.Stdout != "" {
 			fmt.Fprint(out, res.Stdout)
 		}
@@ -205,38 +209,6 @@ func handleTurn(ctx context.Context, s *session, rf *rootFlags, input string, ou
 	return runCommandWithCorrection(ctx, s, rf, resp, out, errW)
 }
 
-func looksLikeShellCommand(input string) bool {
-	if input == "" {
-		return false
-	}
-	parts := strings.Fields(input)
-	if len(parts) == 0 {
-		return false
-	}
-	cmd := parts[0]
-	commonCmds := map[string]bool{
-		"ls": true, "cd": true, "pwd": true, "cat": true, "mkdir": true, "rm": true,
-		"cp": true, "mv": true, "chmod": true, "chown": true, "grep": true, "find": true,
-		"echo": true, "export": true, "source": true, "alias": true, "which": true, "whoami": true,
-		"ps": true, "kill": true, "top": true, "df": true, "du": true, "free": true,
-		"tar": true, "zip": true, "unzip": true, "curl": true, "wget": true, "ssh": true,
-		"git": true, "docker": true, "npm": true, "pip": true, "python": true, "node": true,
-		"go": true, "make": true, "cmake": true, "gcc": true, "g++": true,
-		"ipconfig": true, "dir": true, "type": true, "del": true, "copy": true, "move": true,
-		"tasklist": true, "taskkill": true, "net": true, "ping": true, "nslookup": true,
-	}
-	if commonCmds[cmd] {
-		return true
-	}
-	if strings.HasPrefix(cmd, "./") || strings.HasPrefix(cmd, "/") || strings.HasPrefix(cmd, "~") {
-		return true
-	}
-	if len(cmd) >= 2 && cmd[1] == ':' && (cmd[0] >= 'A' && cmd[0] <= 'Z' || cmd[0] >= 'a' && cmd[0] <= 'z') {
-		return true
-	}
-	return false
-}
-
 func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, errW io.Writer) (prompt.Response, error) {
 	for {
 		resp, raw, err := s.askStream(ctx, mode, input, out)
@@ -279,14 +251,30 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 }
 
 func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, resp prompt.Response, out, errW io.Writer) error {
+	// Самозащита: функция никогда не выполняет команды в dry-run-режиме,
+	// даже если её вызовут из пути без внешней проверки DryRun.
+	if rf.cfg.DryRun {
+		fmt.Fprintln(out, "(dry-run: command not executed)")
+		return nil
+	}
+
 	dec := evaluatePolicy(resp, &rf.cfg)
 	if !dec.Allowed {
 		fmt.Fprintln(out, "(command blocked by security policy)")
 		return nil
 	}
 
-	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		ok, err := confirm(s.input, out, s, "execute?")
+	if rf.preview {
+		ok, err := previewAndConfirm(out, s, resp.Command, dec.Risk)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(out, "(cancelled)")
+			return nil
+		}
+	} else if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
+		ok, err := s.confirmOK(out, "execute?")
 		if err != nil {
 			return err
 		}
@@ -309,6 +297,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 
 	res := executor.Run(ctx, rf.cfg.Shell, resp.Command)
 	s.addRecentAndHistory(resp.Command, "llm")
+	s.audit(resp.Command, "llm", dec, res)
 
 	fb := feedback.Analyze(resp.Command, res.Stdout, res.Stderr, res.ExitCode)
 	if res.Stdout != "" {
@@ -325,6 +314,11 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	stderr := res.Stderr
 	if stderr == "" && res.Err != nil {
 		stderr = res.Err.Error()
+	}
+	// Не засоряем контекст модели гигантским выводом ошибки.
+	const maxErrForCorrection = 4096
+	if len(stderr) > maxErrForCorrection {
+		stderr = stderr[:maxErrForCorrection] + "\n...[truncated]"
 	}
 
 	fmt.Fprintf(out, "\n%s[dmsh]%s Error detected (code %d). Requesting auto-correction from LLM...\n", yellow, reset, res.ExitCode)
@@ -347,7 +341,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 		return nil
 	}
 
-	ok, err := confirm(s.input, out, s, "execute corrected command?")
+	ok, err := s.confirmOK(out, "execute corrected command?")
 	if err != nil {
 		return err
 	}
@@ -358,6 +352,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 
 	resCorr := executor.Run(ctx, rf.cfg.Shell, corrResp.Command)
 	s.addRecentAndHistory(corrResp.Command, "llm")
+	s.audit(corrResp.Command, "llm", decCorr, resCorr)
 
 	fbCorr := feedback.Analyze(corrResp.Command, resCorr.Stdout, resCorr.Stderr, resCorr.ExitCode)
 	if resCorr.Stdout != "" {
@@ -416,6 +411,7 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/clear%s     — clear screen\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/pwd%s       — show current directory\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/history%s   — show history\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/audit%s     — show audit log of executed commands\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode%s      — show current mode\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode ai%s   or %s/mode 1%s or %s/1%s — AI mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/mode help%s or %s/mode 2%s or %s/2%s — Help mode\n", yellow, reset, yellow, reset, yellow, reset)
@@ -440,7 +436,7 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/2%s or %s/mode 2%s            — Help mode (command + explanation)\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/3%s or %s/mode 3%s            — Shell mode (direct execution)\n\n", yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "%sExamples:%s\n  show all txt files\n  find errors in logs\n  start docker\n\n", bold, reset)
-	fmt.Fprintf(out, "%s Default: %sdry-run=false%s (commands execute).\n  Use --dry-run to enable safe mode.\n\n", bold, green, reset)
+	fmt.Fprintf(out, "%s Default: %sdry-run=false%s (commands execute).\n  Use --dry-run to enable safe mode, --preview for a review step,\n  or --yes to auto-approve confirmations in scripts.\n\n", bold, green, reset)
 }
 
 func showKeyBindings(out io.Writer) {
@@ -470,6 +466,7 @@ func showKeyBindings(out io.Writer) {
 	fmt.Fprintf(out, "  %s/clear%s     — clear screen\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/pwd%s       — show current directory\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/history%s   — show history\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/audit%s     — show audit log of executed commands\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode%s      — show current mode\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/bind%s      — show this list\n", yellow, reset)
 	fmt.Fprintf(out, "  %s!command%s   — execute command directly\n", yellow, reset)
@@ -584,21 +581,4 @@ func shortPath(p string) string {
 		return "..." + p[len(p)-37:]
 	}
 	return p
-}
-
-func buildPrompt(username, hostname, cwd, mode string, isTTY bool) string {
-	_ = username
-	short := shortPath(cwd)
-	modeLabel := "ai"
-	if mode != "" {
-		modeLabel = mode
-	}
-	modeColor := green
-	switch modeLabel {
-	case "help":
-		modeColor = yellow
-	case "shell":
-		modeColor = cyan
-	}
-	return fmt.Sprintf("%s[%s] %s%s%s> %s", gray, short, modeColor, modeLabel, reset, reset)
 }

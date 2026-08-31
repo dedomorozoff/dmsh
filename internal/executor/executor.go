@@ -36,7 +36,7 @@ func RunInteractive(ctx context.Context, shell, command string) Result {
 
 	err := cmd.Run()
 	res := Result{
-		Err:    err,
+		Err: err,
 	}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()

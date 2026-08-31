@@ -27,6 +27,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return err
 			}
 			defer s.close()
+			s.setAutoYes(rf.autoYes)
 
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -58,8 +59,37 @@ func evaluatePolicy(resp prompt.Response, cfg *config.Config) policy.Decision {
 	if resp.Intent != prompt.IntentRunCommand {
 		return policy.Decision{Allowed: true, Risk: prompt.RiskLow}
 	}
-	if cfg == nil {
-		return policy.Evaluate(resp.Command, resp.Risk, nil, nil)
+	var userDanger, userSuspicious []string
+	if cfg != nil {
+		userDanger = cfg.DangerPatterns
+		userSuspicious = cfg.SuspiciousPatterns
 	}
-	return policy.Evaluate(resp.Command, resp.Risk, cfg.DangerPatterns, cfg.SuspiciousPatterns)
+	dec := policy.Evaluate(resp.Command, resp.Risk, userDanger, userSuspicious)
+	if dec.Allowed && cfg != nil && allowlisted(resp.Command, cfg.Allowlist) {
+		dec.Risk = prompt.RiskLow
+	}
+	return dec
+}
+
+// allowlisted сообщает, входит ли команда в список всегда-безопасных.
+// Сопоставление по префиксу с границей слова: "git status" покрывает
+// "git status -s", но не "git statusremote".
+func allowlisted(cmd string, list []string) bool {
+	for _, entry := range list {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if cmd == entry || strings.HasPrefix(cmd, entry+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// directDecision возвращает "решение" для команд, запущенных вручную через
+// '!' или в shell-режиме — они минуют политику, поэтому помечаются как
+// разрешённые с низким риском и причиной direct.
+func directDecision() policy.Decision {
+	return policy.Decision{Allowed: true, Risk: prompt.RiskLow, Reason: "direct"}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -15,39 +16,42 @@ import (
 type Mode string
 
 const (
-	ModeAI       Mode = "ai"       // Полная автономия, команда выполняется автоматически
-	ModeHelp     Mode = "help"     // Генерация команд + объяснения, пользователь выполняет вручную
-	ModeShell    Mode = "shell"    // Прозрачный проход через оболочку
+	ModeAI    Mode = "ai"    // Полная автономия, команда выполняется автоматически
+	ModeHelp  Mode = "help"  // Генерация команд + объяснения, пользователь выполняет вручную
+	ModeShell Mode = "shell" // Прозрачный проход через оболочку
 )
 
 // Config описывает рантайм-настройки dmsh. Поля сознательно плоские,
 // чтобы их легко было пробрасывать из флагов CLI и из JSON-файла.
 type Config struct {
-	ModelPath   string  `json:"model_path"`
-	DefaultModel string `json:"default_model"`
-	Threads     int     `json:"threads"`
-	CtxSize     int     `json:"ctx_size"`
-	GPULayers   int     `json:"gpu_layers"`
-	MaxTokens   int     `json:"max_tokens"`
-	Temperature float32 `json:"temperature"`
-	TopP        float32 `json:"top_p"`
-	Shell       string  `json:"shell"`
-	HistoryFile        string   `json:"history_file"`
-	DryRun             bool     `json:"dry_run"`
-	Mode               Mode     `json:"mode"`
+	ModelPath          string            `json:"model_path"`
+	DefaultModel       string            `json:"default_model"`
+	Threads            int               `json:"threads"`
+	CtxSize            int               `json:"ctx_size"`
+	GPULayers          int               `json:"gpu_layers"`
+	MaxTokens          int               `json:"max_tokens"`
+	Temperature        float32           `json:"temperature"`
+	TopP               float32           `json:"top_p"`
+	Shell              string            `json:"shell"`
+	HistoryFile        string            `json:"history_file"`
+	AuditFile          string            `json:"audit_file"`
+	DryRun             bool              `json:"dry_run"`
+	Mode               Mode              `json:"mode"`
+	ResumeSession      bool              `json:"resume_session"`
 	DangerPatterns     []string          `json:"danger_patterns,omitempty"`
 	SuspiciousPatterns []string          `json:"suspicious_patterns,omitempty"`
+	Allowlist          []string          `json:"allowlist,omitempty"`
 	Aliases            map[string]string `json:"aliases,omitempty"`
 }
 
 // HardwareInfo содержит информацию о возможностях системы.
 type HardwareInfo struct {
-	CPUCores    int
-	RAMGB       int
-	GPULayers   int
-	GPUName     string
-	HasGPU      bool
-	GPUType     string // "cpu", "nvidia", "amd", "apple", "intel"
+	CPUCores  int
+	RAMGB     int
+	GPULayers int
+	GPUName   string
+	HasGPU    bool
+	GPUType   string // "cpu", "nvidia", "amd", "apple", "intel"
 }
 
 // DetectHardware определяет возможности системы.
@@ -85,6 +89,7 @@ func Default() Config {
 		TopP:        0.9,
 		Shell:       defaultShell(),
 		HistoryFile: defaultHistoryFile(),
+		AuditFile:   defaultAuditFile(),
 		DryRun:      false,
 		Mode:        ModeAI,
 	}
@@ -118,7 +123,43 @@ func Load() (Config, error) {
 		cfg.GPULayers = hw.GPULayers
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
+}
+
+// Validate проверяет согласованность конфига. Пустой mode нормализуется к
+// ModeAI; некорректные значения и некомпилируемые пользовательские regex
+// возвращаются как ошибка, чтобы не применять молча невалидный конфиг.
+func (c *Config) Validate() error {
+	switch c.Mode {
+	case "":
+		c.Mode = ModeAI
+	case ModeAI, ModeHelp, ModeShell:
+	default:
+		return fmt.Errorf("invalid mode %q (expected ai, help or shell)", c.Mode)
+	}
+
+	if c.Threads < 0 || c.CtxSize < 0 || c.GPULayers < 0 || c.MaxTokens < 0 {
+		return errors.New("threads, ctx_size, gpu_layers and max_tokens must be >= 0")
+	}
+	if c.Temperature < 0 || c.Temperature > 2 {
+		return fmt.Errorf("temperature %.2f out of range [0, 2]", c.Temperature)
+	}
+	if c.TopP <= 0 || c.TopP > 1 {
+		return fmt.Errorf("top_p %.2f out of range (0, 1]", c.TopP)
+	}
+
+	for _, pat := range append(append([]string{}, c.DangerPatterns...), c.SuspiciousPatterns...) {
+		if strings.TrimSpace(pat) == "" {
+			continue
+		}
+		if _, err := regexp.Compile(pat); err != nil {
+			return fmt.Errorf("invalid regex pattern %q: %w", pat, err)
+		}
+	}
+	return nil
 }
 
 // Save сохраняет конфигурацию в ~/.config/dmsh/config.json
@@ -168,6 +209,14 @@ func defaultHistoryFile() string {
 		return ""
 	}
 	return filepath.Join(dir, "dmsh", "history.jsonl")
+}
+
+func defaultAuditFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "dmsh", "audit.jsonl")
 }
 
 // DetectRAMGB определяет объем RAM в гигабайтах.

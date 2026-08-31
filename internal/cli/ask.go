@@ -24,6 +24,7 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 				return err
 			}
 			defer s.close()
+			s.setAutoYes(rf.autoYes)
 
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -32,10 +33,10 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 			s.SetInput(NewBufioReader(cmd.InOrStdin()))
 			resp, err := askWithFollowUp(ctx, s, "ask", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
-if errors.Is(err, errCancelQuestion) {
-				fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
-				return nil
-			}
+				if errors.Is(err, errCancelQuestion) {
+					fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
+					return nil
+				}
 				return err
 			}
 			_ = evaluatePolicy(resp, &rf.cfg)

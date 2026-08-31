@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/model"
+	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
@@ -21,6 +24,19 @@ type HistoryEntry struct {
 	Timestamp time.Time `json:"timestamp"`
 	Command   string    `json:"command"`
 	Source    string    `json:"source"` // "llm" or "direct"
+}
+
+// AuditEntry — строка аудит-лога: что реально выполнялось и какое решение
+// политики было принято. Ведётся для отчётности и разбора инцидентов.
+type AuditEntry struct {
+	Timestamp time.Time   `json:"timestamp"`
+	Command   string      `json:"command"`
+	Source    string      `json:"source"` // "llm" or "direct"
+	Risk      prompt.Risk `json:"risk"`
+	Allowed   bool        `json:"allowed"`
+	Reason    string      `json:"reason,omitempty"`
+	ExitCode  int         `json:"exit_code,omitempty"`
+	Success   bool        `json:"success"`
 }
 
 // SessionStats — статистика текущей сессии.
@@ -44,6 +60,7 @@ type session struct {
 	lastInput string        // последний запрос пользователя (для /retry)
 	turns     []prompt.Turn // последние 5 пар диалога
 	stdinCtx  string        // данные из stdin pipe
+	autoYes   bool          // --yes: пропускать все подтверждения
 }
 
 func newSession(cfg config.Config) (*session, error) {
@@ -62,11 +79,13 @@ func newSession(cfg config.Config) (*session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load model: %w", err)
 	}
-	return &session{
+	s := &session{
 		cfg:    cfg,
 		engine: eng,
 		stats:  SessionStats{StartTime: time.Now()},
-	}, nil
+	}
+	s.loadTurns()
+	return s, nil
 }
 
 func resolveModelPath(cfg config.Config) (string, error) {
@@ -107,6 +126,7 @@ func (s *session) close() {
 	}
 	// Save history
 	_ = s.saveHistory()
+	s.saveTurns()
 }
 
 // switchModel заменяет загруженную модель на лету. При ошибке загрузки
@@ -133,6 +153,19 @@ func (s *session) switchModel(path string) error {
 // SetInput sets the line reader for interactive prompts.
 func (s *session) SetInput(r LineReader) {
 	s.input = r
+}
+
+// setAutoYes включает режим --yes: все подтверждения выполняются автоматически.
+func (s *session) setAutoYes(v bool) {
+	s.autoYes = v
+}
+
+// confirmOK спрашивает подтверждение, если не включён --yes.
+func (s *session) confirmOK(out io.Writer, promptText string) (bool, error) {
+	if s.autoYes {
+		return true, nil
+	}
+	return confirm(s.input, out, s, promptText)
 }
 
 // saveHistory сохраняет историю в файл.
@@ -171,6 +204,34 @@ func (s *session) addHistory(cmd, source string) {
 	})
 }
 
+// audit пишет строку в файл аудит-лога (одна строка JSON). Ошибки записи
+// игнорируются: аудит не должен ломать выполнение команд.
+func (s *session) audit(cmd, source string, dec policy.Decision, res executor.Result) {
+	if s.cfg.AuditFile == "" {
+		return
+	}
+	entry := AuditEntry{
+		Timestamp: time.Now(),
+		Command:   cmd,
+		Source:    source,
+		Risk:      dec.Risk,
+		Allowed:   dec.Allowed,
+		Reason:    dec.Reason,
+		ExitCode:  res.ExitCode,
+		Success:   res.Err == nil && res.ExitCode == 0,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(s.cfg.AuditFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = f.WriteString(string(data) + "\n")
+}
+
 func (s *session) addRecent(cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
@@ -199,6 +260,59 @@ func (s *session) addTurn(user, assistant string) {
 	if len(s.turns) > 5 {
 		s.turns = s.turns[len(s.turns)-5:]
 	}
+}
+
+// sessionFile возвращает путь к файлу персиста multi-turn контекста.
+func sessionFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "dmsh", "session.json")
+}
+
+// loadTurns восстанавливает multi-turn контекст из файла, если включён
+// ResumeSession. Ошибки чтения/парсинга молча игнорируются — это лишь
+// подсказка для модели, а не обязательные данные.
+func (s *session) loadTurns() {
+	if !s.cfg.ResumeSession {
+		return
+	}
+	path := sessionFile()
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var turns []prompt.Turn
+	if json.Unmarshal(data, &turns) != nil {
+		return
+	}
+	if len(turns) > 5 {
+		turns = turns[len(turns)-5:]
+	}
+	s.turns = turns
+}
+
+// saveTurns персистит multi-turn контекст при завершении сессии.
+func (s *session) saveTurns() {
+	if !s.cfg.ResumeSession {
+		return
+	}
+	path := sessionFile()
+	if path == "" {
+		return
+	}
+	data, err := json.Marshal(s.turns)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0644)
 }
 
 // askStream отправляет запрос модели и стримит вывод полей на экран в реальном времени.

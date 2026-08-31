@@ -138,7 +138,10 @@ func (e *cgoEngine) Stream(ctx context.Context, systemPrompt, userPrompt string,
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	prompt := buildChatPrompt(systemPrompt, userPrompt)
+	prompt, err := buildChatPrompt(e, systemPrompt, userPrompt)
+	if err != nil {
+		return err
+	}
 
 	// 1. Токенизация промпта.
 	cPrompt := C.CString(prompt)
@@ -238,10 +241,62 @@ func (e *cgoEngine) Stream(ctx context.Context, systemPrompt, userPrompt string,
 	return nil
 }
 
-// buildChatPrompt — простейший chat-format. Современные модели обычно сами
-// принимают такой формат через chat template; для большей точности можно
-// перейти на llama_chat_apply_template, но это требует знания токенов модели.
-func buildChatPrompt(system, user string) string {
+// buildChatPrompt форматирует system+user в промпт чата. Сначала пробует
+// использовать встроенный chat template модели (через llama_chat_apply_template),
+// чтобы корректно работать с моделями без ChatML-разметки. Если шаблон
+// отсутствует или применение не удалось — откат на ChatML.
+func buildChatPrompt(e *cgoEngine, system, user string) (string, error) {
+	tmpl := C.llama_model_chat_template(e.model, nil)
+	if tmpl == nil {
+		return fallbackChatML(system, user), nil
+	}
+
+	msgs := make([]C.struct_llama_chat_message, 0, 2)
+	var allocs []*C.char
+	defer func() {
+		for _, p := range allocs {
+			C.free(unsafe.Pointer(p))
+		}
+	}()
+	addMsg := func(role, content string) {
+		if strings.TrimSpace(content) == "" {
+			return
+		}
+		cRole := C.CString(role)
+		cContent := C.CString(content)
+		allocs = append(allocs, cRole, cContent)
+		msgs = append(msgs, C.struct_llama_chat_message{role: cRole, content: cContent})
+	}
+	addMsg("system", system)
+	addMsg("user", user)
+	if len(msgs) == 0 {
+		return "", errors.New("llm: empty prompt")
+	}
+
+	size := C.int32_t(2048)
+	buf := make([]C.char, size)
+	n := C.llama_chat_apply_template(tmpl, &msgs[0], C.size_t(len(msgs)), C.bool(true), &buf[0], size)
+	if n < 0 {
+		return "", fmt.Errorf("llm: apply chat template failed (%d)", int(n))
+	}
+	if n >= size {
+		size = n + 1
+		buf = make([]C.char, int(size))
+		n = C.llama_chat_apply_template(tmpl, &msgs[0], C.size_t(len(msgs)), C.bool(true), &buf[0], size)
+		if n < 0 {
+			return "", fmt.Errorf("llm: apply chat template failed (%d)", int(n))
+		}
+	}
+	if n <= 0 {
+		return fallbackChatML(system, user), nil
+	}
+	return C.GoStringN(&buf[0], n), nil
+}
+
+// fallbackChatML — жёстко заданный ChatML-формат для моделей без встроенного
+// шаблона (и для stub/тестов). Историческое поведение до внедрения
+// llama_chat_apply_template.
+func fallbackChatML(system, user string) string {
 	var b strings.Builder
 	if strings.TrimSpace(system) != "" {
 		b.WriteString("<|im_start|>system\n")

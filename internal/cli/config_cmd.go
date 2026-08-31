@@ -24,7 +24,7 @@ func newConfigCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-out := cmd.OutOrStdout()
+			out := cmd.OutOrStdout()
 			fmt.Fprintln(out, "=== Current Configuration ===")
 			fmt.Fprintf(out, "  %-20s %v\n", "model_path:", cfg.ModelPath)
 			fmt.Fprintf(out, "  %-20s %v\n", "default_model:", cfg.DefaultModel)
@@ -38,7 +38,7 @@ out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "  %-20s %v\n", "history_file:", cfg.HistoryFile)
 			fmt.Fprintf(out, "  %-20s %v\n", "dry_run:", cfg.DryRun)
 			fmt.Fprintf(out, "  %-20s %v\n", "mode:", cfg.Mode)
-			
+
 			if len(cfg.DangerPatterns) > 0 {
 				fmt.Fprintln(out, "  danger_patterns:")
 				for _, pat := range cfg.DangerPatterns {

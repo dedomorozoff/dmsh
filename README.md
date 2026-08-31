@@ -19,6 +19,10 @@ By default AI-suggested commands **are executed automatically** if they
 pass the safety check and are rated low-risk. Pass `--dry-run` (or set
 `dry_run` in the config) to preview commands without executing them.
 
+For an extra review layer, pass `--preview`: before execution dmsh shows the
+command with its options highlighted and the risk level, then asks for an
+explicit y/N confirmation.
+
 ## Install
 
 ### Packages
@@ -90,7 +94,10 @@ Config and models live under:
 | macOS | `~/Library/Application Support/dmsh/` |
 | Windows | `%AppData%\dmsh\` |
 
-History is stored alongside (`history.jsonl`).
+History is stored alongside (`history.jsonl`). Every executed command is also
+logged to `audit.jsonl` (timestamp, command, source, risk, policy decision,
+exit code) for accountability. Set `resume_session: true` in the config to
+persist the multi-turn dialogue context across restarts.
 
 ## REPL
 
@@ -152,10 +159,11 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `dmsh version` | version, build date, platform, build tags |
 | `dmsh config show/set` | view and edit configuration (incl. custom `danger_patterns` / `suspicious_patterns`) |
 | `dmsh history` | command history |
+| `dmsh audit` | audit log of executed commands (add `--json` for raw lines) |
 
 Common flags (all subcommands): `--model`, `--threads`, `--ctx-size`,
 `--gpu-layers`, `--max-tokens`, `--temperature`, `--top-p`, `--shell`,
-`--dry-run`.
+`--dry-run`, `--preview`, `--yes`.
 
 ## Auto-detection
 
@@ -183,13 +191,18 @@ The policy layer runs before any execution:
   risk level and trigger a y/N confirmation.
 - **Confirmation** — required whenever risk is above low or the model
   itself flags uncertainty. Low-risk commands may run without asking.
+- **Allowlist** — add trusted commands to config (`allowlist: ["git status"]`)
+  to always treat them as low-risk (no confirmation).
+- **Audit log** — every executed command is written to `audit.jsonl` with its
+  risk, policy decision and exit code; view it with `dmsh audit` or `/audit`.
 
 You can extend both lists via config (`danger_patterns`,
 `suspicious_patterns`). Blocked patterns also apply to commands the
 model suggests as corrections.
 
 Note: out of the box dmsh is *not* dry-run. If you want a strict
-review-everything workflow, use Help mode or `--dry-run`.
+review-everything workflow, use Help mode or `--dry-run`; add `--preview`
+for a highlighted review step or `--yes` to auto-approve in scripts.
 
 ## Building
 

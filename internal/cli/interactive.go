@@ -15,7 +15,8 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	fmt.Fprintln(out, "║      dmsh — Direct Model Shell           ║")
 	fmt.Fprintln(out, "║   Type commands in natural language      ║")
 	fmt.Fprintln(out, "║   Example: show me all files             ║")
-	fmt.Fprintln(out, "║   Type /help for commands.               ║")
+	fmt.Fprintln(out, "║   /help for commands, /audit for log     ║")
+	fmt.Fprintln(out, "║   --preview adds a review step           ║")
 	fmt.Fprintln(out, "╚══════════════════════════════════════════╝")
 	fmt.Fprintln(out, "")
 
@@ -27,6 +28,7 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 		return err
 	}
 	defer s.close()
+	s.setAutoYes(rf.autoYes)
 
 	m := NewTuiModel(rf, s)
 	p := tea.NewProgram(m)

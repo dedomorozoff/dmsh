@@ -45,14 +45,14 @@ type tuiModel struct {
 	height int
 	ready  bool
 
-	state        tuiState
-	streaming    bool
-	streamed     bool
+	state            tuiState
+	streaming        bool
+	streamed         bool
 	streamHasContent bool
-	streamCtx    context.Context
-	streamCancel context.CancelFunc
-	tokenCh      chan tokenMsg
-	streamDone   chan streamResult
+	streamCtx        context.Context
+	streamCancel     context.CancelFunc
+	tokenCh          chan tokenMsg
+	streamDone       chan streamResult
 
 	confirmText string
 	confirmOK   func(bool)

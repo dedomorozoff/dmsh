@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/dedomorozoff/dmsh/internal/config"
@@ -9,12 +11,17 @@ import (
 
 // rootFlags holds common flags shared across subcommands.
 type rootFlags struct {
-	cfg config.Config
+	cfg     config.Config
+	preview bool
+	autoYes bool
 }
 
 // NewRootCmd assembles the root cobra command.
 func NewRootCmd() *cobra.Command {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "dmsh: "+err.Error())
+	}
 	rf := &rootFlags{cfg: cfg}
 
 	cmd := &cobra.Command{
@@ -46,12 +53,15 @@ func NewRootCmd() *cobra.Command {
 	pf.Float32Var(&rf.cfg.TopP, "top-p", rf.cfg.TopP, "top-p sampling threshold")
 	pf.StringVar(&rf.cfg.Shell, "shell", rf.cfg.Shell, "shell for command execution")
 	pf.BoolVar(&rf.cfg.DryRun, "dry-run", rf.cfg.DryRun, "show commands without executing them")
+	pf.BoolVar(&rf.preview, "preview", false, "show the command with highlighted options and require confirmation before executing")
+	pf.BoolVar(&rf.autoYes, "yes", false, "automatically approve confirmations (for scripting)")
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(newHistoryCmd())
+	cmd.AddCommand(newAuditCmd())
 	addModelCommand(cmd, rf)
 
 	return cmd

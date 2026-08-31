@@ -125,12 +125,12 @@ func TestEvaluate_UnixNewDangerPatterns(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping Unix-specific test on Windows")
 	}
-	
+
 	testCases := []string{
 		"find / -name '*.log' -exec rm {} \\;",
 		"find . -type f | xargs rm -f",
 	}
-	
+
 	for _, tc := range testCases {
 		d := evaluateHelper(tc, prompt.RiskLow)
 		if d.Allowed {
@@ -146,7 +146,7 @@ func TestEvaluate_WindowsNewDangerPatterns(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Skipping Windows-specific test on Unix")
 	}
-	
+
 	testCases := []string{
 		"bcdedit /set {default} bootstatuspolicy ignoreallfailures",
 		"reg add HKLM\\Software\\Policies\\Microsoft\\WindowsDefender /v DisableAntiSpyware /t REG_DWORD /d 1 /f",
@@ -158,7 +158,7 @@ func TestEvaluate_WindowsNewDangerPatterns(t *testing.T) {
 		"wmic process call create \"powershell.exe\"",
 		"takeown /f C:\\Windows\\System32\\cmd.exe",
 	}
-	
+
 	for _, tc := range testCases {
 		d := evaluateHelper(tc, prompt.RiskLow)
 		if d.Allowed {
@@ -201,5 +201,3 @@ func TestEvaluate_CustomUserRules(t *testing.T) {
 		t.Fatalf("expected RiskLow, got %s", d3.Risk)
 	}
 }
-
-
