@@ -189,10 +189,12 @@ jobs:
           docker run --rm -v "$(pwd)":/build -w /build archlinux/archlinux:latest bash -c \
             "pacman -Syu --noconfirm --needed base-devel &&
              useradd -m builder &&
-             chown -R builder /build &&
-             cp /build/bin/dmsh-linux-amd64 /build/dmsh &&
-             su builder -c 'cd /build && makepkg -p PKGBUILD.ci -f'"
-          cp *.pkg.tar.zst bin/
+             mkdir -p /build/work && chown -R builder /build/work &&
+             cp /build/bin/dmsh-linux-amd64 /build/work/dmsh &&
+             cp /build/man.tar.gz /build/work/man.tar.gz &&
+             cp /build/PKGBUILD.ci /build/work/PKGBUILD &&
+             su builder -c 'cd /build/work && makepkg -f'"
+          cp work/*.pkg.tar.zst bin/
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
