@@ -185,6 +185,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           sed "s/@VERSION@/${VERSION}/" packaging/PKGBUILD.prebuilt > PKGBUILD.ci
+          tar -czf man.tar.gz man
           docker run --rm -v "$(pwd)":/build -w /build archlinux/archlinux:latest bash -c \
             "pacman -Syu --noconfirm --needed base-devel &&
              useradd -m builder &&
