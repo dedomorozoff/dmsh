@@ -12,6 +12,7 @@ arch=('x86_64')
 url="https://github.com/dedomorozoff/dmsh"
 license=('MIT')
 depends=('gcc-libs' 'glibc')
+options=('!strip' '!debug')
 source=('dmsh' 'man.tar.gz')
 sha256sums=('SKIP' 'SKIP')
 
