@@ -93,3 +93,12 @@ func allowlisted(cmd string, list []string) bool {
 func directDecision() policy.Decision {
 	return policy.Decision{Allowed: true, Risk: prompt.RiskLow, Reason: "direct"}
 }
+
+// hasExecutableCommand сообщает, содержит ли ответ команду, которую нужно
+// выполнить: явный run_command, либо explain/ask_clarification с командой.
+func hasExecutableCommand(resp prompt.Response) bool {
+	if resp.Intent == prompt.IntentRunCommand {
+		return true
+	}
+	return (resp.Intent == prompt.IntentExplain || resp.Intent == prompt.IntentAskClarification) && resp.Command != ""
+}

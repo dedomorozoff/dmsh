@@ -54,9 +54,8 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	}
 
 	dec := evaluatePolicy(resp, &rf.cfg)
-	_ = dec
 
-	if resp.Intent != prompt.IntentRunCommand && !(resp.Intent == prompt.IntentExplain && resp.Command != "") && !(resp.Intent == prompt.IntentAskClarification && resp.Command != "") {
+	if !hasExecutableCommand(resp) {
 		return nil
 	}
 	if rf.cfg.DryRun {

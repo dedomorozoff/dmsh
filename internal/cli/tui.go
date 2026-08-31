@@ -43,7 +43,6 @@ type tuiModel struct {
 
 	width  int
 	height int
-	ready  bool
 
 	state            tuiState
 	streaming        bool
@@ -283,14 +282,15 @@ func (m tuiModel) View() tea.View {
 		}
 	}
 	y := m.inputRow()
-	if m.state == tuiModelMenu {
+	switch m.state {
+	case tuiModelMenu:
 		// Menu rows replace the input line; place the cursor on the selected
 		// entry (1 = the title row).
 		y = m.inputRow() + 1 + m.modelIdx
 		if m.height > 1 && y > m.height-2 {
 			y = m.height - 2
 		}
-	} else if m.state == tuiConfirming || m.state == tuiSearch {
+	case tuiConfirming, tuiSearch:
 		// Confirming/search rows live inside the scrollback; step back to the
 		// wrapped block that contains the current cursor row.
 		line := ""
@@ -347,10 +347,10 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 	}
 	switch m.state {
 	case tuiConfirming:
-		body.WriteString(fmt.Sprintf("%sExecute? [y/N]: %s%s\n", colorYellow, m.confirmText, colorReset))
+		fmt.Fprintf(&body, "%sExecute? [y/N]: %s%s\n", colorYellow, m.confirmText, colorReset)
 	case tuiQuestion:
 		if m.pendingResp.Question != "" {
-			body.WriteString(fmt.Sprintf("%s[dmsh] %s%s\n", colorCyan, m.pendingResp.Question, colorReset))
+			fmt.Fprintf(&body, "%s[dmsh] %s%s\n", colorCyan, m.pendingResp.Question, colorReset)
 		}
 	case tuiSearch:
 		body.WriteString(m.searchPrompt() + colorGreen + m.input + "\n")
@@ -1037,6 +1037,7 @@ func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 	}
 	res := executor.Run(context.Background(), m.rf.cfg.Shell, resp.Command)
 	m.s.addRecentAndHistory(resp.Command, "llm")
+	m.s.audit(resp.Command, "llm", evaluatePolicy(resp, &m.rf.cfg), res)
 	if res.Stdout != "" {
 		m.addLine(res.Stdout)
 	}
@@ -1138,6 +1139,7 @@ func (m *tuiModel) executeDirect(cmd string) {
 	}
 	res := executor.RunInteractive(context.Background(), m.rf.cfg.Shell, cmd)
 	m.s.addRecentAndHistory(cmd, "direct")
+	m.s.audit(cmd, "direct", directDecision(), res)
 	if res.Stdout != "" {
 		m.addLine(res.Stdout)
 	}
