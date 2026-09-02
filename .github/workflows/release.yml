@@ -90,20 +90,7 @@ jobs:
           path: bin/dmsh${{ matrix.ext }}
 
   build-cuda:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            goos: linux
-            goarch: amd64
-            ext: ""
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            ext: ".exe"
-
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -114,8 +101,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install deps + CUDA toolkit (Linux)
-        if: matrix.goos == 'linux'
+      - name: Install deps + CUDA toolkit
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
@@ -123,12 +109,6 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
           sudo apt-get install -y cuda-toolkit-12-5
-
-      - name: Install CUDA toolkit (Windows)
-        if: matrix.goos == 'windows'
-        uses: Jimver/cuda-toolkit@v0.2.21
-        with:
-          cuda: '12.4.1'
 
       - name: Build llama.cpp (CUDA)
         shell: bash
@@ -149,28 +129,15 @@ jobs:
             *)  VERSION="dev" ;;
           esac
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          export CGO_LDFLAGS="-L\"${CUDA_LIBDIR}\""
+          export CGO_LDFLAGS="-L/usr/local/cuda/lib64"
           go build -tags "llama cuda" \
             -ldflags="-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$VERSION -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$BUILD_DATE" \
-            -o "bin/dmsh${{ matrix.ext }}" ./cmd/dmsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
-          CUDA_LIBDIR: ${{ matrix.goos == 'linux' && '/usr/local/cuda/lib64' || 'C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4/lib/x64' }}
-
-      - name: Copy CUDA runtime DLLs (Windows)
-        if: matrix.goos == 'windows'
-        shell: bash
-        run: |
-          CUDADIR="${CUDA_PATH:-/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4}"
-          find "$CUDADIR/bin" -maxdepth 1 \( -iname 'cudart64*.dll' -o -iname 'cublas64*.dll' -o -iname 'cublasLt64*.dll' \) -exec cp -n {} bin/ \; || true
-          ls -la bin/
+            -o bin/dmsh ./cmd/dmsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dmsh-${{ matrix.goos }}-${{ matrix.goarch }}-cuda
+          name: dmsh-linux-amd64-cuda
           path: bin/*
 
   package:
@@ -310,11 +277,8 @@ jobs:
           for dir in release/dmsh-*; do
             name=$(basename "$dir")
             [[ "$name" == "dmsh-packages" ]] && continue
-            if [[ "$name" == *"windows"* && "$name" != *"cuda"* ]]; then
+            if [[ "$name" == *"windows"* ]]; then
               cp "$dir/dmsh.exe" "dist/${name}.exe"
-            elif [[ "$name" == *"cuda"* && "$name" == *"windows"* ]]; then
-              # CUDA Windows artifact holds dmsh.exe + CUDA runtime DLLs → ship as zip
-              (cd "$dir" && zip -r "../../dist/${name}.zip" .)
             else
               tar -czf "dist/${name}.tar.gz" -C "$dir" .
             fi
