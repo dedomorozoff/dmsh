@@ -91,7 +91,6 @@ jobs:
 
   build-cuda:
     runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,12 +99,10 @@ jobs:
             goos: linux
             goarch: amd64
             ext: ""
-            container: nvidia/cuda:12.4.1-devel-ubuntu22.04
           - os: windows-latest
             goos: windows
             goarch: amd64
             ext: ".exe"
-            container: ""
 
     steps:
       - uses: actions/checkout@v5
@@ -117,11 +114,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install deps (Linux/CUDA container)
+      - name: Install deps + CUDA toolkit (Linux)
         if: matrix.goos == 'linux'
         run: |
-          apt-get update
-          apt-get install -y build-essential cmake git
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-4
 
       - name: Install CUDA toolkit (Windows)
         if: matrix.goos == 'windows'
@@ -130,6 +131,7 @@ jobs:
           cuda: '12.4.1'
 
       - name: Build llama.cpp (CUDA)
+        shell: bash
         run: |
           cmake -G "Unix Makefiles" -S third_party/llama.cpp -B third_party/llama.cpp/build \
             -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
