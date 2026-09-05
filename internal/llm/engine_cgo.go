@@ -10,7 +10,7 @@ package llm
 #cgo darwin LDFLAGS: ${SRCDIR}/../../third_party/llama.cpp/build/src/libllama.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-base.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-cpu.a
 
 // Windows paths — CMake does not add lib prefix for nested static libs
-#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/llama.cpp/build/src/libllama.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/ggml.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/ggml-base.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/ggml-cpu.a -lstdc++ -lgomp
+#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/llama.cpp/build/src/libllama.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/ggml.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/ggml-base.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/ggml-cpu.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-cuda.a -L${SRCDIR}/../../third_party/llama.cpp/build/cuda-lib -lcudart_static -lcublas -lcublasLt -lstdc++ -lgomp -lkernel32
 #cgo linux LDFLAGS: ${SRCDIR}/../../third_party/llama.cpp/build/src/libllama.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-base.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-cpu.a -lm -lstdc++ -lpthread -ldl -lgomp
 #cgo darwin LDFLAGS: ${SRCDIR}/../../third_party/llama.cpp/build/src/libllama.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-base.a ${SRCDIR}/../../third_party/llama.cpp/build/ggml/src/libggml-cpu.a -lm -lc++ -framework Accelerate
 
