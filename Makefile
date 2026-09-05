@@ -53,6 +53,8 @@ LDFLAGS ?= -s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$(VERSION)
 
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0
+# Путь к CUDA Toolkit (переопределить под свою систему при GPU=cuda)
+CUDA_PATH ?= /usr/local/cuda
 # Портативная сборка: без AVX2/FMA/AVX512/BMI2, чтобы бинарник работал на старых CPU.
 # При желании ускорения на конкретной машине можно переопределить: make CMAKE_ARCH_FLAGS="-DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_BMI2=ON"
 CMAKE_ARCH_FLAGS ?= -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_AVX512=OFF -DGGML_BMI2=OFF
@@ -100,13 +102,21 @@ endif
 
 llama: llama-prepare
 
+ifneq ($(GPU),cuda)
+BUILD_TAGS := llama
+CUDA_GO_LDFLAGS :=
+else
+BUILD_TAGS := llama cuda
+CUDA_GO_LDFLAGS := CGO_LDFLAGS="-L$(CUDA_PATH)/lib64 -L$(CUDA_PATH)/lib/x64 -Wl,-rpath,$(CUDA_PATH)/lib64"
+endif
+
 .PHONY: build
 build: llama-prepare ## Собрать релизный бинарник (llama, CGO)
 ifeq ($(IS_UNIX),1)
-	$(GO) build $(GOFLAGS) -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh ./cmd/dmsh
+	$(CUDA_GO_LDFLAGS) $(GO) build $(GOFLAGS) -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o bin/dmsh ./cmd/dmsh
 else
 	powershell -Command "if (-not (Test-Path bin)) { New-Item -ItemType Directory -Path bin }"
-	go build -tags llama -ldflags "$(LDFLAGS)" -o bin/dmsh.exe ./cmd/dmsh
+	$(CUDA_GO_LDFLAGS) go build -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o bin/dmsh.exe ./cmd/dmsh
 	powershell -Command "if (Test-Path '$(MINGW_BIN)/libstdc++-6.dll') { Copy-Item '$(MINGW_BIN)/libstdc++-6.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgcc_s_seh-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libgomp-1.dll' bin/ -Force; Copy-Item '$(MINGW_BIN)/libwinpthread-1.dll' bin/ -Force }"
 endif
 
