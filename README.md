@@ -141,11 +141,11 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `Esc` / `Ctrl+C` | cancel / stop streaming |
 | `Ctrl+A/E/U/K` | start/end/delete-to-start/delete-to-end of line |
 | `Ctrl+R/S` | history search |
-| `Ctrl+P/N` | previous / next history entry |
+| `Ctrl+N` | next history entry |
 | `Alt+B/F/D` | move / delete by word |
 | `Ctrl+W` | delete word back |
 | `Ctrl+L` | clear screen |
-| `Ctrl+O` | model menu (install / switch model) |
+| `Ctrl+O` / `Ctrl+P` | model menu (install / switch model) |
 | `Tab` | complete slash command |
 | `↑/↓` | history or scroll (when input is empty) |
 | `PgUp/PgDn` | scroll output |

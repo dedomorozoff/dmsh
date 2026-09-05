@@ -328,9 +328,9 @@ func TestMenuArrowsSelect(t *testing.T) {
 	if m.input != "/cd" {
 		t.Fatalf("second down cycles to next match, input = %q", m.input)
 	}
-	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.input != "/clear" {
-		t.Fatalf("ctrl+p should step up in the menu, input = %q", m.input)
+		t.Fatalf("up should step up in the menu, input = %q", m.input)
 	}
 }
 
@@ -368,11 +368,14 @@ func TestEnterCompletesUniqueMenuMatch(t *testing.T) {
 	}
 }
 
-func TestCtrlPOnEmptyHistoryGivesFeedback(t *testing.T) {
+func TestCtrlPOpensModelMenu(t *testing.T) {
 	m := newTestTui()
 	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
-	if !strings.Contains(m.content, "history is empty") {
-		t.Fatalf("ctrl+p with no history should show feedback:\n%s", m.content)
+	if m.state != tuiModelMenu {
+		t.Fatalf("ctrl+p should open the model menu, state = %d", m.state)
+	}
+	if len(m.modelItems) == 0 {
+		t.Fatal("model menu should list items")
 	}
 }
 
