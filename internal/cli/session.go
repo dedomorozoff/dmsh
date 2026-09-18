@@ -51,16 +51,18 @@ type SessionStats struct {
 // session инкапсулирует движок и собранный для него контекст промпта.
 // Один session живёт всё время REPL или одной CLI-команды.
 type session struct {
-	cfg       config.Config
-	engine    llm.Engine
-	recent    []string
-	hist      []HistoryEntry
-	input     LineReader
-	stats     SessionStats
-	lastInput string        // последний запрос пользователя (для /retry)
-	turns     []prompt.Turn // последние 5 пар диалога
-	stdinCtx  string        // данные из stdin pipe
-	autoYes   bool          // --yes: пропускать все подтверждения
+	cfg          config.Config
+	engine       llm.Engine
+	recent       []string
+	hist         []HistoryEntry
+	savedHist    int           // индекс первой незаписанной записи в hist
+	input        LineReader
+	stats        SessionStats
+	lastInput    string        // последний запрос пользователя (для /retry)
+	retryPending bool          // /retry был введён — повторить lastInput
+	turns        []prompt.Turn // последние 5 пар диалога
+	stdinCtx     string        // данные из stdin pipe
+	autoYes      bool          // --yes: пропускать все подтверждения
 }
 
 func newSession(cfg config.Config) (*session, error) {
@@ -144,9 +146,12 @@ func (s *session) switchModel(path string) error {
 	if err != nil {
 		return fmt.Errorf("load model: %w", err)
 	}
-	_ = s.engine.Close()
+	// Закрываем старый движок только после успешной загрузки нового,
+	// чтобы не оставить s.engine указывающим на закрытый объект.
+	old := s.engine
 	s.engine = eng
 	s.cfg.ModelPath = path
+	_ = old.Close()
 	return nil
 }
 
@@ -168,32 +173,58 @@ func (s *session) confirmOK(out io.Writer, promptText string) (bool, error) {
 	return confirm(s.input, out, s, promptText)
 }
 
-// saveHistory сохраняет историю в файл.
+// saveHistory дописывает в файл только новые (ещё не сохранённые) записи.
+// Это предотвращает дублирование при повторном вызове close() и позволяет
+// файлу расти постепенно. Обрезка до 1000 строк выполняется раз в 500 новых
+// записей, чтобы файл не рос бесконечно.
 func (s *session) saveHistory() error {
 	if s.cfg.HistoryFile == "" {
 		return nil
 	}
-
-	// Keep only last 1000 entries
-	start := 0
-	if len(s.hist) > 1000 {
-		start = len(s.hist) - 1000
+	newEntries := s.hist[s.savedHist:]
+	if len(newEntries) == 0 {
+		return nil
 	}
-	hist := s.hist[start:]
 
-	// Append to history file
 	f, err := os.OpenFile(s.cfg.HistoryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("open history file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
-
-	for _, entry := range hist {
+	for _, entry := range newEntries {
 		data, _ := json.Marshal(entry)
 		_, _ = f.WriteString(string(data) + "\n")
 	}
+	if closeErr := f.Close(); closeErr != nil {
+		return fmt.Errorf("close history file: %w", closeErr)
+	}
+	s.savedHist = len(s.hist)
+
+	// Обрезаем файл до 1000 строк каждые 500 новых записей.
+	if len(newEntries) >= 500 {
+		_ = trimHistoryFile(s.cfg.HistoryFile, 1000)
+	}
 	return nil
 }
+
+// trimHistoryFile оставляет в файле только последние maxLines строк,
+// атомарно заменяя исходный файл через временный.
+func trimHistoryFile(path string, maxLines int) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) <= maxLines {
+		return nil
+	}
+	lines = lines[len(lines)-maxLines:]
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 
 // addHistory добавляет команду в историю сессии.
 func (s *session) addHistory(cmd, source string) {

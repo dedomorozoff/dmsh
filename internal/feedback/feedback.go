@@ -156,17 +156,6 @@ func analyzeSuccess(command, stdout string) string {
 
 // Format выводит результат в понятном формате.
 func (r Result) Format() string {
-	var b strings.Builder
-
-	if r.Success {
-		if r.Hint != "" {
-			b.WriteString(r.Hint)
-		}
-	} else {
-		if r.Hint != "" {
-			b.WriteString(r.Hint)
-		}
-	}
-
-	return b.String()
+	return r.Hint
 }
+

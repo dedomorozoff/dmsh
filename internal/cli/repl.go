@@ -15,26 +15,33 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
+// Цветовые escape-коды ANSI. Используются во всём пакете cli.
 var (
-	reset  = "\033[0m"
-	bold   = "\033[1m"
-	cyan   = "\033[36m"
-	green  = "\033[32m"
-	yellow = "\033[33m"
-	red    = "\033[31m"
-	gray   = "\033[90m"
+	colorReset  = "\033[0m"
+	colorBold   = "\033[1m"
+	colorCyan   = "\033[36m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorRed    = "\033[31m"
+	colorGray   = "\033[90m"
 )
 
+// Псевдонимы для обратной совместимости с кодом в session.go и oneshot.go.
 var (
-	colorReset  = reset
-	colorBold   = bold
-	colorCyan   = cyan
-	colorGreen  = green
-	colorYellow = yellow
-	colorRed    = red
-	colorGray   = gray
+	reset  = colorReset
+	bold   = colorBold
+	cyan   = colorCyan
+	green  = colorGreen
+	yellow = colorYellow
+	red    = colorRed
+	gray   = colorGray
 )
 
+// ErrRetry сигнализирует, что пользователь запросил /retry — повторить
+// последний запрос с альтернативным подходом.
+var ErrRetry = errors.New("retry requested")
+
+// errCancelQuestion сигнализирует об отмене clarification-вопроса.
 var errCancelQuestion = errors.New("cancelled")
 
 func handleSlash(line string, out io.Writer, s *session) (stop bool) {
@@ -47,7 +54,6 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		showHelp(out)
 	case strings.HasPrefix(line, "/cd "):
 		target := strings.TrimSpace(strings.TrimPrefix(line, "/cd "))
-		target = strings.TrimSpace(target)
 		if err := os.Chdir(target); err != nil {
 			fmt.Fprintf(out, "%s%s%s\n", red, err, reset)
 		}
@@ -77,6 +83,8 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 			fmt.Fprintf(out, "%sNo previous request to retry.%s\n", yellow, reset)
 			return false
 		}
+		// Маркируем: вызывающий код должен повторить lastInput.
+		s.retryPending = true
 		return false
 	case strings.HasPrefix(line, "/export"):
 		handleExport(line, out, s)
@@ -101,6 +109,7 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		fmt.Fprintf(out, "%sunknown command: %s%s\n", red, line, reset)
 	}
 	return false
+
 }
 
 func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, errW io.Writer) (prompt.Response, error) {
@@ -447,12 +456,10 @@ func handleAlias(line string, out io.Writer, cfg *config.Config) {
 
 func flushOutput(w io.Writer) {
 	if f, ok := w.(*os.File); ok {
-		os.Stderr.Sync()
-		if f == os.Stdout || f == os.Stderr {
-			os.Stdout.Sync()
-		}
+		_ = f.Sync()
 	}
 }
+
 
 func isTerminal(r io.Reader) bool {
 	if f, ok := r.(*os.File); ok {

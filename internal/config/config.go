@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // Mode определяет режим работы dmsh.
@@ -54,18 +55,25 @@ type HardwareInfo struct {
 	GPUType   string // "cpu", "nvidia", "amd", "apple", "intel"
 }
 
-// DetectHardware определяет возможности системы.
+// hwOnce гарантирует однократный запуск детекции железа за процесс.
+var (
+	hwOnce   sync.Once
+	hwCached HardwareInfo
+)
+
+// DetectHardware определяет возможности системы. Результат кешируется —
+// внешние процессы (nvidia-smi, powershell) запускаются не более одного раза.
 func DetectHardware() HardwareInfo {
-	hw := HardwareInfo{
-		CPUCores: runtime.NumCPU(),
-		RAMGB:    DetectRAMGB(),
-	}
-
-	// Detect GPU
-	hw.GPUType, hw.GPUName, hw.GPULayers = detectGPU()
-	hw.HasGPU = hw.GPUType != "cpu"
-
-	return hw
+	hwOnce.Do(func() {
+		hw := HardwareInfo{
+			CPUCores: runtime.NumCPU(),
+			RAMGB:    DetectRAMGB(),
+		}
+		hw.GPUType, hw.GPUName, hw.GPULayers = detectGPU()
+		hw.HasGPU = hw.GPUType != "cpu"
+		hwCached = hw
+	})
+	return hwCached
 }
 
 // Default возвращает дефолтную конфигурацию. Значения подобраны под
@@ -343,14 +351,26 @@ func detectWindowsRAM() int {
 	// Fallback: try to read from system info
 	output, err = executeCommand("systeminfo")
 	if err == nil {
-		// Parse "Total Physical Memory" from systeminfo
+		// Parse "Total Physical Memory:    16,384 MB"
+		// systeminfo форматирует числа с запятыми и пробелами в зависимости от локали,
+		// поэтому сначала удаляем разделители тысяч перед парсингом.
 		lines := strings.Split(output, "\n")
 		for _, line := range lines {
 			if strings.Contains(line, "Total Physical Memory") {
-				// Extract number from "Total Physical Memory:    16,384 MB"
+				colonIdx := strings.Index(line, ":")
+				if colonIdx == -1 {
+					continue
+				}
+				numPart := strings.TrimSpace(line[colonIdx+1:])
+				// Удаляем суффикс " MB" и разделители тысяч (запятые/точки/пробелы)
+				numPart = strings.TrimSuffix(strings.TrimSpace(numPart), "MB")
+				numPart = strings.ReplaceAll(numPart, ",", "")
+				numPart = strings.ReplaceAll(numPart, ".", "")
+				numPart = strings.TrimSpace(numPart)
 				var ram int
-				_, _ = fmt.Sscanf(line, "%*s %*s %d", &ram)
-				return ram / 1024 // Convert MB to GB
+				if _, err := fmt.Sscanf(numPart, "%d", &ram); err == nil && ram > 0 {
+					return ram / 1024 // Convert MB to GB
+				}
 			}
 		}
 	}
@@ -358,6 +378,7 @@ func detectWindowsRAM() int {
 	// Last resort: return 8GB as default
 	return 8
 }
+
 
 // detectLinuxRAM определяет RAM на Linux.
 func detectLinuxRAM() int {

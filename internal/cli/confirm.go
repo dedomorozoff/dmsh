@@ -17,7 +17,7 @@ func confirm(r LineReader, out io.Writer, s *session, promptText string) (bool, 
 		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
-		return false, nil
+		return false, err
 	}
 	answer = strings.TrimSpace(answer)
 
@@ -32,3 +32,4 @@ func confirm(r LineReader, out io.Writer, s *session, promptText string) (bool, 
 	answer = strings.ToLower(answer)
 	return answer == "y" || answer == "yes", nil
 }
+
