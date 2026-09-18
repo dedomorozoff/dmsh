@@ -648,10 +648,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursorPos++
 		}
 	case "ctrl+p":
-		if m.menuSelect(-1) {
-			return m, nil
-		}
-		return m.handleHistoryPrev()
+		// Model selection / download menu (same as Ctrl+O).
+		return m.openModelMenu(), nil
 	case "ctrl+n":
 		if m.menuSelect(1) {
 			return m, nil
@@ -1300,7 +1298,7 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/model%s       — current model", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+O%s       — model menu (install / switch)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+O/P%s       — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/bind%s        — key bindings", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/help%s        — this info", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/exit%s        — exit", colorYellow, colorReset))
@@ -1312,7 +1310,8 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sEsc%s / %sCtrl+C%s — cancel / stop", colorYellow, colorReset, colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+A/E/U/K%s   — start/end/delete-to-start/delete-to-end", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+R/S%s       — history search", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+P/N%s       — prev/next history", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+N%s          — next history", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+P%s          — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sAlt+B/F/D%s      — word back/forward/delete", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+W%s         — delete word back", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+L%s         — clear screen", colorYellow, colorReset))

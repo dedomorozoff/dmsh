@@ -11,7 +11,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/model"
 )
 
-// modelMenuItem — одна строка меню моделей (Ctrl+O).
+// modelMenuItem — одна строка меню моделей (Ctrl+O / Ctrl+P).
 type modelMenuItem struct {
 	name      string
 	info      *model.ModelInfo // задан для рекомендуемых, ещё не скачанных
@@ -99,7 +99,7 @@ func (m tuiModel) buildModelMenu() []modelMenuItem {
 // menuRows — строки, показываемые вместо строки ввода, когда открыто меню.
 func (m tuiModel) menuRows() []string {
 	var rows []string
-	rows = append(rows, hardWrap(fmt.Sprintf("%s=== model menu%s%s (ctrl+o: close) ===%s",
+	rows = append(rows, hardWrap(fmt.Sprintf("%s=== model menu%s%s (ctrl+o/ctrl+p) ===%s",
 		colorBold+colorCyan, colorReset, colorGray, colorReset), m.width)...)
 
 	for i, it := range m.modelItems {
