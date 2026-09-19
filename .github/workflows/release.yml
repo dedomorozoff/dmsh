@@ -132,7 +132,8 @@ jobs:
             *)  VERSION="dev" ;;
           esac
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          export CGO_LDFLAGS="-L/usr/local/cuda/lib64"
+          # libcuda lives in the driver; toolkit ships a link stub for CI/no-GPU builds.
+          export CGO_LDFLAGS="-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs"
           go build -tags "llama cuda" \
             -ldflags="-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$VERSION -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$BUILD_DATE" \
             -o bin/dmsh ./cmd/dmsh
