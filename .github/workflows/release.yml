@@ -194,20 +194,28 @@ jobs:
         shell: pwsh
         env:
           CGO_ENABLED: '1'
-          CC: cl.exe
-          CXX: cl.exe
+          # clang-cl speaks MSVC ABI but accepts GCC-style cgo flags (-Werror).
+          # Plain cl.exe rejects /Werror that Go's runtime/cgo passes through.
+          CC: clang-cl
+          CXX: clang-cl
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
           $version = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { 'dev' }
           $buildDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
           $cudaLib = Join-Path $env:CUDA_PATH 'lib\x64'
-          # Drop MinGW from PATH so cgo uses MSVC link.exe, not gcc's.
+          # Drop MinGW from PATH so cgo does not pick gcc/ld.
           $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch '(?i)mingw|msys' }) -join ';'
+          if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
+            Write-Error "clang-cl not found on PATH (need VS LLVM tools)"
+            exit 1
+          }
           $env:CGO_LDFLAGS = "-L`"$cudaLib`""
           $env:CGO_LDFLAGS_ALLOW = '.*'
+          $env:CGO_CFLAGS_ALLOW = '.*'
           go build -tags 'llama cuda' `
             -ldflags "-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$version -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$buildDate" `
             -o bin/dmsh.exe ./cmd/dmsh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Copy CUDA runtime DLLs
         shell: pwsh
