@@ -146,8 +146,9 @@ jobs:
           path: bin/*
 
   # Windows CUDA requires MSVC: MinGW cannot link the NVIDIA CUDA toolkit.
+  # Use windows-2022 (VS 17): CUDA 12.5's nvcc/cudafe++ crashes on VS 18 (MSVC 19.51).
   build-cuda-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -174,13 +175,9 @@ jobs:
       - name: Build llama.cpp (CUDA / MSVC)
         shell: pwsh
         run: |
-          # Ninja + cl avoids hard-coding a Visual Studio generator year
-          # (windows-latest moved from VS 17/2022 to VS 18).
-          # CUDA 12.5 nvcc only allowlists MSVC through VS 2022; override for VS 18.
           cmake -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_CUDA_COMPILER="$env:CUDA_PATH\bin\nvcc.exe" `
-            -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
             -S third_party/llama.cpp -B third_party/llama.cpp/build `
             -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF `
             -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF `
