@@ -174,7 +174,11 @@ jobs:
       - name: Build llama.cpp (CUDA / MSVC)
         shell: pwsh
         run: |
-          cmake -G "Visual Studio 17 2022" -A x64 `
+          # Ninja + cl avoids hard-coding a Visual Studio generator year
+          # (windows-latest moved from VS 17/2022 to VS 18).
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+            -DCMAKE_CUDA_COMPILER="$env:CUDA_PATH\bin\nvcc.exe" `
             -S third_party/llama.cpp -B third_party/llama.cpp/build `
             -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF `
             -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF `
