@@ -133,7 +133,8 @@ jobs:
             *)  VERSION="dev" ;;
           esac
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          export CGO_LDFLAGS="-L/usr/local/cuda/lib64"
+          # libcuda lives in the driver; toolkit ships a link stub for CI/no-GPU builds.
+          export CGO_LDFLAGS="-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs"
           go build -tags "llama cuda" \
             -ldflags="-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$VERSION -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$BUILD_DATE" \
             -o bin/dmsh ./cmd/dmsh
@@ -263,7 +264,9 @@ jobs:
             bin/dmsh-*.pkg.tar.zst
 
   release:
-    needs: [build, package]
+    # Wait for build-cuda so the CUDA artifact is present when packaging.
+    # build-cuda has continue-on-error, so a CUDA failure still allows a CPU-only release.
+    needs: [build, package, build-cuda]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
