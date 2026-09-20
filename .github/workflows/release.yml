@@ -145,6 +145,80 @@ jobs:
           name: dmsh-linux-amd64-cuda
           path: bin/*
 
+  # Windows CUDA requires MSVC: MinGW cannot link the NVIDIA CUDA toolkit.
+  build-cuda-windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '12.5.0'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]'
+
+      - name: Build llama.cpp (CUDA / MSVC)
+        shell: pwsh
+        run: |
+          cmake -G "Visual Studio 17 2022" -A x64 `
+            -S third_party/llama.cpp -B third_party/llama.cpp/build `
+            -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF `
+            -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF `
+            -DGGML_OPENMP=OFF -DGGML_CUDA=ON
+          cmake --build third_party/llama.cpp/build --config Release --parallel 2
+          Write-Host "=== CUDA / ggml libs ==="
+          Get-ChildItem -Recurse third_party/llama.cpp/build -Include *.lib |
+            Where-Object { $_.Name -match 'llama|ggml' } |
+            ForEach-Object { $_.FullName }
+
+      - name: Build dmsh (CUDA / MSVC)
+        shell: pwsh
+        env:
+          CGO_ENABLED: '1'
+          CC: cl.exe
+          CXX: cl.exe
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          $version = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { 'dev' }
+          $buildDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          $cudaLib = Join-Path $env:CUDA_PATH 'lib\x64'
+          # Drop MinGW from PATH so cgo uses MSVC link.exe, not gcc's.
+          $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch '(?i)mingw|msys' }) -join ';'
+          $env:CGO_LDFLAGS = "-L`"$cudaLib`""
+          $env:CGO_LDFLAGS_ALLOW = '.*'
+          go build -tags 'llama cuda' `
+            -ldflags "-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$version -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$buildDate" `
+            -o bin/dmsh.exe ./cmd/dmsh
+
+      - name: Copy CUDA runtime DLLs
+        shell: pwsh
+        run: |
+          $cudaBin = Join-Path $env:CUDA_PATH 'bin'
+          Get-ChildItem $cudaBin -Filter 'cudart64*.dll' | Copy-Item -Destination bin/ -Force
+          Get-ChildItem $cudaBin -Filter 'cublas64*.dll' | Copy-Item -Destination bin/ -Force
+          Get-ChildItem $cudaBin -Filter 'cublasLt64*.dll' | Copy-Item -Destination bin/ -Force
+          Get-ChildItem bin | Format-Table Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmsh-windows-amd64-cuda
+          path: bin/*
+
   package:
     needs: build
     runs-on: ubuntu-24.04
@@ -264,9 +338,9 @@ jobs:
             bin/dmsh-*.pkg.tar.zst
 
   release:
-    # Wait for build-cuda so the CUDA artifact is present when packaging.
-    # build-cuda has continue-on-error, so a CUDA failure still allows a CPU-only release.
-    needs: [build, package, build-cuda]
+    # Wait for CUDA jobs so artifacts are present when packaging.
+    # CUDA jobs have continue-on-error, so a CUDA failure still allows a CPU-only release.
+    needs: [build, package, build-cuda, build-cuda-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
@@ -284,8 +358,11 @@ jobs:
           for dir in release/dmsh-*; do
             name=$(basename "$dir")
             [[ "$name" == "dmsh-packages" ]] && continue
-            if [[ "$name" == *"windows"* ]]; then
-              cp "$dir/dmsh.exe" "dist/${name}.exe"
+            # Single-file Windows CPU exe stays as .exe; CUDA Windows (exe+DLLs) and
+            # everything else ship as tar.gz so companion DLLs are preserved.
+            file_count=$(find "$dir" -type f | wc -l)
+            if [[ "$name" == *"windows"* && "$file_count" -eq 1 ]]; then
+              cp "$dir"/*.exe "dist/${name}.exe"
             else
               tar -czf "dist/${name}.tar.gz" -C "$dir" .
             fi
