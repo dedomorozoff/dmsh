@@ -213,7 +213,11 @@ jobs:
             Write-Error "clang not found on PATH (need VS LLVM tools)"
             exit 1
           }
-          $env:CGO_LDFLAGS = "-L`"$cudaLib`""
+          # cgo records -L flags as //go:cgo_ldflag directives, which cannot
+          # contain spaces ("C:\Program Files\..." breaks the directive parser).
+          # Resolve the 8.3 short path so the flag is space-free.
+          $shortCudaLib = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($cudaLib).ShortPath
+          $env:CGO_LDFLAGS = "-L$shortCudaLib"
           $env:CGO_LDFLAGS_ALLOW = '.*'
           $env:CGO_CFLAGS_ALLOW = '.*'
           go build -tags 'llama cuda' `
