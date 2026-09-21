@@ -194,10 +194,14 @@ jobs:
         shell: pwsh
         env:
           CGO_ENABLED: '1'
-          # clang-cl speaks MSVC ABI but accepts GCC-style cgo flags (-Werror).
-          # Plain cl.exe rejects /Werror that Go's runtime/cgo passes through.
-          CC: clang-cl
-          CXX: clang-cl
+          # clang-cl is the MSVC-frontend driver and rejects the GCC-style flags
+          # Go's cgo passes to $CC: the `-dM` macro probe (cmd/cgo) and
+          # `-fno-stack-protector`/`-Werror` from runtime/cgo's own CFLAGS become
+          # hard errors ("unknown argument ignored in clang-cl"). Use plain clang
+          # in GNU-driver mode targeting the MSVC ABI: it accepts Go's flags while
+          # still emitting COFF objects and linking with link.exe (VC tools).
+          CC: "clang --target=x86_64-pc-windows-msvc"
+          CXX: "clang++ --target=x86_64-pc-windows-msvc"
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
           $version = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { 'dev' }
@@ -205,8 +209,8 @@ jobs:
           $cudaLib = Join-Path $env:CUDA_PATH 'lib\x64'
           # Drop MinGW from PATH so cgo does not pick gcc/ld.
           $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch '(?i)mingw|msys' }) -join ';'
-          if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
-            Write-Error "clang-cl not found on PATH (need VS LLVM tools)"
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            Write-Error "clang not found on PATH (need VS LLVM tools)"
             exit 1
           }
           $env:CGO_LDFLAGS = "-L`"$cudaLib`""
