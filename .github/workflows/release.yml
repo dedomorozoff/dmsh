@@ -172,6 +172,54 @@ jobs:
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]'
 
+      # Fast (~1 min) check of the cgo external-link toolchain before spending
+      # ~1.5h on llama.cpp. Links a trivial cgo program against the CUDA import
+      # libs with the exact same CC/CGO_LDFLAGS/extldflags the real build uses.
+      - name: Probe cgo toolchain (CUDA / MSVC)
+        shell: pwsh
+        env:
+          CGO_ENABLED: '1'
+          CC: "clang --target=x86_64-pc-windows-msvc"
+          CXX: "clang++ --target=x86_64-pc-windows-msvc"
+        run: |
+          $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch '(?i)mingw|msys' }) -join ';'
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            Write-Error "clang not found on PATH (need VS LLVM tools)"
+            exit 1
+          }
+          $cudaLib = Join-Path $env:CUDA_PATH 'lib\x64'
+          $shortCudaLib = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($cudaLib).ShortPath
+          New-Item -ItemType Directory -Force -Path stubs | Out-Null
+          # Go's windows external link always passes "-lmingwex -lmingw32"
+          # (GNU ld flags). Provide empty stubs so both link.exe and lld-link
+          # resolve them; nothing in dmsh references those symbols.
+          foreach ($n in 'mingwex', 'mingw32') {
+            [System.IO.File]::WriteAllText("$PWD\stubs\$n.lib", "!<arch>`n")
+          }
+          $env:CGO_LDFLAGS = "-L$(Resolve-Path stubs) -L$shortCudaLib"
+          $env:CGO_LDFLAGS_ALLOW = '.*'
+          $env:CGO_CFLAGS_ALLOW = '.*'
+          $probe = Join-Path $env:RUNNER_TEMP 'dmsh-toolchain-probe'
+          New-Item -ItemType Directory -Force $probe | Out-Null
+          $probeSrc = @(
+            'package main',
+            '',
+            '/*',
+            '#cgo windows LDFLAGS: -lcudart -lcublas -lcublasLt -lcuda -ladvapi32',
+            'int cudaGetDeviceCount(int*);',
+            '*/',
+            'import "C"',
+            '',
+            'func main() {',
+            '    var n C.int',
+            '    C.cudaGetDeviceCount(&n)',
+            '}'
+          )
+          [System.IO.File]::WriteAllLines((Join-Path $probe 'main.go'), $probeSrc)
+          go build -ldflags "-extldflags=-fuse-ld=lld" -o (Join-Path $probe 'probe.exe') (Join-Path $probe 'main.go')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "=== cgo toolchain probe OK ==="
+
       - name: Build llama.cpp (CUDA / MSVC)
         shell: pwsh
         run: |
@@ -217,11 +265,20 @@ jobs:
           # contain spaces ("C:\Program Files\..." breaks the directive parser).
           # Resolve the 8.3 short path so the flag is space-free.
           $shortCudaLib = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($cudaLib).ShortPath
-          $env:CGO_LDFLAGS = "-L$shortCudaLib"
+          # Same stubs as the toolchain probe: Go's windows external link emits
+          # "-lmingwex -lmingw32" unconditionally.
+          New-Item -ItemType Directory -Force -Path stubs | Out-Null
+          foreach ($n in 'mingwex', 'mingw32') {
+            [System.IO.File]::WriteAllText("$PWD\stubs\$n.lib", "!<arch>`n")
+          }
+          $env:CGO_LDFLAGS = "-L$(Resolve-Path stubs) -L$shortCudaLib"
           $env:CGO_LDFLAGS_ALLOW = '.*'
           $env:CGO_CFLAGS_ALLOW = '.*'
+          # -fuse-ld=lld: cmd/link detects LLD and skips its GNU gdb linker
+          # script ("-Wl,-T,fix_debug_gdb_scripts.ld"), which link.exe rejects
+          # with LNK1107; lld-link also tolerates the remaining GNU-style flags.
           go build -tags 'llama cuda' `
-            -ldflags "-s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$version -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$buildDate" `
+            -ldflags "-s -w -extldflags=-fuse-ld=lld -X github.com/dedomorozoff/dmsh/internal/cli.Version=$version -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$buildDate" `
             -o bin/dmsh.exe ./cmd/dmsh
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
