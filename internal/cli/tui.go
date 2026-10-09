@@ -14,6 +14,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/feedback"
+	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
@@ -27,6 +28,7 @@ const (
 	tuiSearch
 	tuiModelMenu
 	tuiPalette
+	tuiRunning // команда выполняется: ввод свободен, виден спиннер
 )
 
 type tuiModel struct {
@@ -87,6 +89,15 @@ type tuiModel struct {
 	// fixTries считает автокоррекции подряд. Без счётчика модель, которая
 	// возвращает ту же падающую команду, запускает бесконечный цикл.
 	fixTries int
+
+	// running — фоновая команда (composer, тесты, сборка): пока она идёт,
+	// ввод свободен, а состояние держит спиннер. cmdSeq нумерует запуски,
+	// чтобы устаревший результат не затёр новый.
+	running       bool
+	cmdSeq        int
+	cmdCancel     context.CancelFunc
+	cmdCommand    string
+	cmdStartedAt  time.Time
 }
 
 // slashCommands — commands offered by Tab completion and the "/" menu.
@@ -144,6 +155,31 @@ type tokenMsg struct {
 type streamDoneMsg struct {
 	resp prompt.Response
 	err  error
+}
+
+// cmdDoneMsg — фоновая команда завершилась. seq отбрасывает устаревшие
+// результаты: пользователь мог запустить новую команду раньше.
+type cmdDoneMsg struct {
+	seq  int
+	resp prompt.Response
+	res  executor.Result
+	dec  policyDecisionLite
+}
+
+// directDoneMsg — прямая команда через "!" завершилась в фоне.
+type directDoneMsg struct {
+	seq int
+	cmd string
+	res executor.Result
+}
+
+// policyDecisionLite — копия решения политики для записи в аудит после
+// фонового выполнения: сам объект policy.Decision не храним, чтобы не
+// тащить зависимость в сообщения.
+type policyDecisionLite struct {
+	allowed bool
+	risk    prompt.Risk
+	reason  string
 }
 
 type tuiWriter struct {
@@ -280,6 +316,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case terminalRanMsg:
 		m.printTerminalRun(msg)
 		return m, nil
+	case cmdDoneMsg:
+		return m.finishBackgroundCommand(msg)
+	case directDoneMsg:
+		return m.finishDirectCommand(msg)
 	case modelDoneMsg:
 		m.modelBusy = false
 		m.modelProgress = -1
@@ -428,6 +468,10 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 		inRows = hardWrap(m.buildPrompt()+m.input, m.width)
 		if m.streaming {
 			inRows = hardWrap(fmt.Sprintf("%s[dmsh] thinking…%s", colorCyan, colorReset), m.width)
+		} else if m.running {
+			// Команда выполняется в фоне: ввод свободен, виден прогресс.
+			inRows = append(inRows, hardWrap(fmt.Sprintf("%s… running %s (Esc cancels)%s",
+				colorYellow, shortCmd(m.cmdCommand), colorReset), m.width)...)
 		}
 		// Slash-command menu with descriptions while typing "/".
 		const maxVisible = 8
@@ -450,6 +494,16 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 		}
 	}
 	return bodyRows, inRows
+}
+
+// shortCmd укорачивает команду для строки состояния: длинные composer-строки
+// иначе разваливают вёрстку.
+func shortCmd(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if len([]rune(cmd)) <= 60 {
+		return cmd
+	}
+	return string([]rune(cmd)[:57]) + "…"
 }
 
 // inputRow returns the row (0-based) where the input line starts inside the
@@ -662,6 +716,15 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, waitForToken(m.tokenCh, m.streamDone)
+	}
+	// Фоновая команда идёт: Esc/Ctrl+C отменяет её, остальной ввод свободен.
+	if m.running {
+		if msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" {
+			m.cancelCommand()
+			m.state = tuiIdle
+			m.addLine(fmt.Sprintf("%s^C (command cancelled)%s", colorYellow, colorReset))
+			return m, nil
+		}
 	}
 	// Printable text: no ctrl/alt modifiers (shift/caps are fine). Text may be
 	// multi-byte (Cyrillic etc.), so gate on content, not byte length.
@@ -996,8 +1059,7 @@ func (m tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(line, "!") {
 		cmd := strings.TrimSpace(strings.TrimPrefix(line, "!"))
 		m.addLine(fmt.Sprintf("%s$ %s%s", colorCyan, cmd, colorReset))
-		m.executeDirect(cmd)
-		return m, nil
+		return m.startDirectCommand(cmd)
 	}
 	if m.rf.cfg.Mode == config.ModeShell {
 		// Непустая строка выполняется в псевдотерминале: программам, которым
@@ -1177,16 +1239,67 @@ func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 		m.s.addRecentAndHistory(resp.Command, "llm")
 		return m, nil
 	}
-	res := executor.Run(context.Background(), m.rf.cfg.Shell, resp.Command)
-	m.s.addRecentAndHistory(resp.Command, "llm")
-	m.s.audit(resp.Command, "llm", evaluatePolicy(resp, &m.rf.cfg), res)
-	if res.Stdout != "" {
-		m.addLine(res.Stdout)
+	// Долгие команды (composer, тесты, сборка) идут в фоне: TUI остаётся
+	// отзывчивым, вывод появится по завершении. Отмена — Esc/Ctrl+C.
+	return m.startBackgroundCommand(resp)
+}
+
+// startBackgroundCommand запускает команду LLM в фоне через tea.Cmd.
+// Синхронного executor.Run здесь больше нет: раньше Update висел на нём,
+// и весь интерфейс замирал до конца команды.
+func (m tuiModel) startBackgroundCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
+	m.cancelCommand()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cmdCancel = cancel
+	m.cmdSeq++
+	seq := m.cmdSeq
+	m.cmdCommand = resp.Command
+	m.cmdStartedAt = time.Now()
+	m.running = true
+	m.state = tuiRunning
+	dec := evaluatePolicy(resp, &m.rf.cfg)
+	lite := policyDecisionLite{allowed: dec.Allowed, risk: dec.Risk, reason: dec.Reason}
+	shell := m.rf.cfg.Shell
+	command := resp.Command
+	m.addLine(fmt.Sprintf("%srunning in background — Esc cancels%s", colorGray, colorReset))
+	return m, func() tea.Msg {
+		res := executor.Run(ctx, shell, command)
+		return cmdDoneMsg{seq: seq, resp: resp, res: res, dec: lite}
 	}
-	if res.Stderr != "" {
-		m.addLine(fmt.Sprintf("%s%s%s", colorRed, res.Stderr, colorReset))
+}
+
+// cancelCommand останавливает фоновую команду, если она идёт.
+func (m *tuiModel) cancelCommand() {
+	if m.cmdCancel != nil {
+		m.cmdCancel()
+		m.cmdCancel = nil
 	}
-	fb := feedback.Analyze(resp.Command, res.Stdout, res.Stderr, res.ExitCode)
+	m.running = false
+}
+
+// finishBackgroundCommand печатает результат фоновой команды и ведёт
+// историю/аудит тем же путём, что и синхронный запуск.
+func (m tuiModel) finishBackgroundCommand(msg cmdDoneMsg) (tuiModel, tea.Cmd) {
+	if msg.seq != m.cmdSeq {
+		return m, nil
+	}
+	m.cancelCommand()
+	m.state = tuiIdle
+	elapsed := time.Since(m.cmdStartedAt).Round(time.Second)
+	m.s.addRecentAndHistory(msg.resp.Command, "llm")
+	m.s.audit(msg.resp.Command, "llm", restoreDecision(msg.dec), msg.res)
+	if msg.res.Stdout != "" {
+		m.addLine(msg.res.Stdout)
+	}
+	if msg.res.Stderr != "" {
+		m.addLine(fmt.Sprintf("%s%s%s", colorRed, msg.res.Stderr, colorReset))
+	}
+	if msg.res.Err != nil && msg.res.ExitCode != 0 {
+		m.addLine(fmt.Sprintf("%sexit %d after %s%s", colorGray, msg.res.ExitCode, elapsed, colorReset))
+	} else {
+		m.addLine(fmt.Sprintf("%sdone in %s%s", colorGray, elapsed, colorReset))
+	}
+	fb := feedback.Analyze(msg.resp.Command, msg.res.Stdout, msg.res.Stderr, msg.res.ExitCode)
 	if fb.Success {
 		// Команда удалась — цикл автокоррекции закончен, лимит снова полон.
 		m.fixTries = 0
@@ -1195,7 +1308,13 @@ func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 		}
 		return m, nil
 	}
-	return m.autoCorrect(resp, res)
+	return m.autoCorrect(msg.resp, msg.res)
+}
+
+// restoreDecision возвращает полное решение политики из лёгкой копии:
+// нужно для аудита фоновой команды после её завершения.
+func restoreDecision(lite policyDecisionLite) policy.Decision {
+	return policy.Decision{Allowed: lite.allowed, Risk: lite.risk, Reason: lite.reason}
 }
 
 // maxAutoFix ограничивает автокоррекцию подряд. Модель может сколько угодно
@@ -1310,18 +1429,64 @@ func (m *tuiModel) executeDirect(cmd string) {
 		m.s.addRecentAndHistory(cmd, "direct")
 		return
 	}
-	res := executor.RunInteractive(context.Background(), m.rf.cfg.Shell, cmd)
-	m.s.addRecentAndHistory(cmd, "direct")
-	m.s.audit(cmd, "direct", directDecision(), res)
-	if res.Stdout != "" {
-		m.addLine(res.Stdout)
+	// Прямая команда тоже идёт в фоне: иначе composer через "!" вешает ввод.
+	mm, _ := m.startDirectCommand(cmd)
+	*m = mm
+}
+
+// startDirectCommand запускает "!"-команду в фоне. Встроенные (cd, exit)
+// выполняются сразу — им фон не нужен.
+func (m tuiModel) startDirectCommand(cmd string) (tuiModel, tea.Cmd) {
+	if handled, shouldExit, err := runBuiltin(cmd, io.Discard, io.Discard, m.s.recent); handled {
+		if err != nil {
+			m.addLine(fmt.Sprintf("%s%s%s", colorRed, err, colorReset))
+		}
+		if shouldExit {
+			m.addLine("bye!")
+		}
+		m.s.addRecentAndHistory(cmd, "direct")
+		return m, nil
 	}
-	if res.Stderr != "" {
-		m.addLine(fmt.Sprintf("%s%s%s", colorRed, res.Stderr, colorReset))
+	m.cancelCommand()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cmdCancel = cancel
+	m.cmdSeq++
+	seq := m.cmdSeq
+	m.cmdCommand = cmd
+	m.cmdStartedAt = time.Now()
+	m.running = true
+	m.state = tuiRunning
+	shell := m.rf.cfg.Shell
+	m.addLine(fmt.Sprintf("%srunning in background — Esc cancels%s", colorGray, colorReset))
+	return m, func() tea.Msg {
+		// Прямые команды интерактивные: вывод идёт пользователю напрямую.
+		res := executor.Run(ctx, shell, cmd)
+		return directDoneMsg{seq: seq, cmd: cmd, res: res}
 	}
-	if res.Err != nil {
-		m.addLine(fmt.Sprintf("%sexit %d: %v%s", colorRed, res.ExitCode, res.Err, colorReset))
+}
+
+// finishDirectCommand печатает результат фоновой "!"-команды.
+func (m tuiModel) finishDirectCommand(msg directDoneMsg) (tuiModel, tea.Cmd) {
+	if msg.seq != m.cmdSeq {
+		return m, nil
 	}
+	m.cancelCommand()
+	m.state = tuiIdle
+	elapsed := time.Since(m.cmdStartedAt).Round(time.Second)
+	m.s.addRecentAndHistory(msg.cmd, "direct")
+	m.s.audit(msg.cmd, "direct", directDecision(), msg.res)
+	if msg.res.Stdout != "" {
+		m.addLine(msg.res.Stdout)
+	}
+	if msg.res.Stderr != "" {
+		m.addLine(fmt.Sprintf("%s%s%s", colorRed, msg.res.Stderr, colorReset))
+	}
+	if msg.res.Err != nil {
+		m.addLine(fmt.Sprintf("%sexit %d: %v%s", colorRed, msg.res.ExitCode, msg.res.Err, colorReset))
+	} else {
+		m.addLine(fmt.Sprintf("%sdone in %s%s", colorGray, elapsed, colorReset))
+	}
+	return m, nil
 }
 
 func (m tuiModel) handleHistoryPrev() (tea.Model, tea.Cmd) {

@@ -528,7 +528,6 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	}
 
 	pr := newStreamPrinter(out)
-	fmt.Fprintf(out, "%s[dmsh]%s ", cyan, reset)
 
 	var err error
 	if tc, ok := s.toolEngine(); ok {

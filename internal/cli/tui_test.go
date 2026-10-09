@@ -1351,6 +1351,94 @@ func TestAutoCorrectStopsAfterLimit(t *testing.T) {
 	}
 }
 
+// Команда LLM выполняется в фоне: Update возвращает сразу, ввод не висит.
+func TestRunCommandDoesNotBlock(t *testing.T) {
+	m := newTestTui()
+	m.width = 100
+	m.height = 20
+	resp := prompt.Response{
+		Intent:  prompt.IntentRunCommand,
+		Command: "echo dmsh-bg-marker",
+		Risk:    prompt.RiskLow,
+	}
+	got, cmd := m.runCommand(resp)
+	if cmd == nil {
+		t.Fatal("want a background command, got nil")
+	}
+	if !got.running {
+		t.Fatal("model must be marked as running while the command works")
+	}
+	// Ввод свободен во время выполнения: печатаем новый запрос.
+	got.input = "next"
+	got.cursorPos = 4
+	if got.input != "next" {
+		t.Fatal("input must stay editable while a command runs")
+	}
+	mm, _ := got.Update(cmd().(cmdDoneMsg))
+	got = mm.(tuiModel)
+	if got.running {
+		t.Fatal("running must be cleared after completion")
+	}
+	if !strings.Contains(got.content, "dmsh-bg-marker") {
+		t.Fatalf("output missing:\n%s", got.content)
+	}
+}
+
+// Esc во время фоновой команды отменяет её и возвращает в idle.
+func TestEscCancelsBackgroundCommand(t *testing.T) {
+	m := newTestTui()
+	m.width = 100
+	m.height = 20
+	resp := prompt.Response{
+		Intent:  prompt.IntentRunCommand,
+		Command: "echo dmsh-cancel-marker",
+		Risk:    prompt.RiskLow,
+	}
+	got, cmd := m.runCommand(resp)
+	if cmd == nil {
+		t.Fatal("want a background command, got nil")
+	}
+	got = press(got, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if got.running || got.state != tuiIdle {
+		t.Fatalf("state = %d running = %v, want idle after Esc", got.state, got.running)
+	}
+	if got.cmdCancel != nil {
+		t.Fatal("cancel func must be cleared after Esc")
+	}
+}
+
+// Устаревший результат фоновой команды не затирает новую.
+func TestStaleBackgroundResultIgnored(t *testing.T) {
+	m := newTestTui()
+	m.width = 100
+	m.height = 20
+	first, cmd1 := m.runCommand(prompt.Response{
+		Intent: prompt.IntentRunCommand, Command: "echo first", Risk: prompt.RiskLow,
+	})
+	if cmd1 == nil {
+		t.Fatal("want a background command, got nil")
+	}
+	stale := cmd1().(cmdDoneMsg)
+	staleBefore := first.content
+	// Пользователь успел запустить вторую команду раньше завершения первой.
+	second, _ := first.startBackgroundCommand(prompt.Response{
+		Intent: prompt.IntentRunCommand, Command: "echo second", Risk: prompt.RiskLow,
+	})
+	mm, _ := second.Update(stale)
+	got := mm.(tuiModel)
+	// Эхо первой команды уже было в транскрипте до запуска второй — это
+	// нормально. Устаревший результат не должен добавлять вывод "first".
+	if strings.Contains(got.content[len(staleBefore):], "first") {
+		t.Fatalf("stale result must be ignored:\n%s", got.content)
+	}
+	if !got.running {
+		t.Fatal("second command must still be running")
+	}
+	if got.cmdSeq != second.cmdSeq {
+		t.Fatal("seq must not roll back to the stale message")
+	}
+}
+
 // Успешная команда возвращает лимит автокоррекции в полное состояние.
 func TestAutoCorrectBudgetResetsOnSuccess(t *testing.T) {
 	m := newTestTui()
@@ -1362,12 +1450,29 @@ func TestAutoCorrectBudgetResetsOnSuccess(t *testing.T) {
 		Command: "echo dmsh-auto-fix-marker",
 		Risk:    prompt.RiskLow,
 	}
-	got, _ := m.runCommand(resp)
+	got, cmd := m.runCommand(resp)
+	if cmd == nil {
+		t.Fatal("runCommand must return a background command")
+	}
+	// Команда ушла в фон: синхронного вывода ещё нет, но состояние — running.
+	if !got.running || got.state != tuiRunning {
+		t.Fatalf("state = %d running = %v, want tuiRunning + running", got.state, got.running)
+	}
+	// Выполняем фоновую команду и отдаём результат обратно в модель.
+	msg := cmd().(cmdDoneMsg)
+	if msg.seq != got.cmdSeq {
+		t.Fatalf("seq = %d, want %d", msg.seq, got.cmdSeq)
+	}
+	mm, _ := got.Update(msg)
+	got = mm.(tuiModel)
 	if got.fixTries != 0 {
 		t.Fatalf("fixTries = %d after a successful command, want 0", got.fixTries)
 	}
 	if !strings.Contains(got.content, "dmsh-auto-fix-marker") {
 		t.Fatalf("command output missing:\n%s", got.content)
+	}
+	if got.running || got.state != tuiIdle {
+		t.Fatalf("state = %d running = %v, want idle after completion", got.state, got.running)
 	}
 }
 

@@ -51,6 +51,10 @@ Rules:
 3. Mark destructive commands as risk_level="high".
 4. Never propose to disable security or run remote code.
 5. Keep "command" to a single line.
+6. Reply in the SAME language the user wrote in. Never switch languages.
+7. Chit-chat ("hi", "hello", "привет", "thanks", "спасибо", "who are you") is NOT a task: answer with intent=explain, a one-line greeting in explanation, and an EMPTY command. Never invent a shell command for chit-chat.
+8. Non-shell requests (beer, food, jokes, advice, opinions) are NOT shell tasks: answer with intent=explain, a short plain-language reply in explanation, and an EMPTY command. Never refuse with a lecture, never moralize, never claim inability — just answer briefly and helpfully in one or two sentences.
+9. Only ask a clarifying question (intent=ask_clarification) when the request names a REAL shell task but a required argument is missing (e.g. project name, file path, host). Never ask about chit-chat or non-shell requests.
 `
 
 const toolNotice = `Tools:
