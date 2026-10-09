@@ -2,20 +2,27 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/llm"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
 func newTestTui() tuiModel {
 	rf := &rootFlags{cfg: config.Config{Mode: config.ModeAI, ModelPath: "/models/q4.gguf"}}
-	return NewTuiModel(rf, &session{cfg: rf.cfg}).(tuiModel)
+	// Движок задаётся сразу: handleEnter и autoCorrect запускают стрим в
+	// фоне, и без него тестовая горутина падает на nil после возврата.
+	return NewTuiModel(rf, &session{cfg: rf.cfg, engine: &captureEngine{}}).(tuiModel)
 }
 
 func press(m tuiModel, msg tea.KeyPressMsg) tuiModel {
@@ -368,14 +375,289 @@ func TestEnterCompletesUniqueMenuMatch(t *testing.T) {
 	}
 }
 
-func TestCtrlPOpensModelMenu(t *testing.T) {
+func TestCtrlPOpensPalette(t *testing.T) {
 	m := newTestTui()
 	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
-	if m.state != tuiModelMenu {
-		t.Fatalf("ctrl+p should open the model menu, state = %d", m.state)
+	if m.state != tuiPalette {
+		t.Fatalf("ctrl+p should open the command palette, state = %d", m.state)
 	}
-	if len(m.modelItems) == 0 {
-		t.Fatal("model menu should list items")
+	if m.input != "" {
+		t.Fatalf("palette should start with an empty query, got %q", m.input)
+	}
+	if len(paletteMatches("")) == 0 {
+		t.Fatal("palette should list commands")
+	}
+}
+
+func TestCtrlPFiltersPalette(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = press(m, keyText("cle"))
+	items := paletteMatches(m.input)
+	if len(items) != 1 || items[0].name != "/clear" {
+		t.Fatalf("query %q matched %v, want only /clear", m.input, items)
+	}
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("palette /clear must not submit to the LLM")
+	}
+	got := mm.(tuiModel)
+	if got.state != tuiIdle {
+		t.Fatalf("palette should close after Enter, state = %d", got.state)
+	}
+}
+
+func TestPaletteEnterRunsSelected(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = press(m, keyText("help"))
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/help must not submit to the LLM")
+	}
+	got := mm.(tuiModel)
+	if got.state != tuiIdle {
+		t.Fatalf("palette should close after running, state = %d", got.state)
+	}
+	if !strings.Contains(got.content, "dmsh help") {
+		t.Fatalf("/help should print the help, content:\n%s", got.content)
+	}
+}
+
+func TestPaletteArrowsMoveSelection(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if m.paletteIdx != 0 {
+		t.Fatalf("initial selection = %d, want 0", m.paletteIdx)
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.paletteIdx != 1 {
+		t.Fatalf("down: selection = %d, want 1", m.paletteIdx)
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.paletteIdx != 0 {
+		t.Fatalf("up: selection = %d, want 0", m.paletteIdx)
+	}
+	// Clamped at the top, not wrapped around.
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.paletteIdx != 0 {
+		t.Fatalf("up at the top: selection = %d, want 0 (clamped)", m.paletteIdx)
+	}
+}
+
+func TestPaletteEscapeRestoresInput(t *testing.T) {
+	m := newTestTui()
+	m.input = "черновик"
+	m.cursorPos = runeSliceLen(m.input)
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if m.input != "" {
+		t.Fatalf("opening the palette should clear the query, got %q", m.input)
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.state != tuiIdle {
+		t.Fatalf("esc: state = %d, want tuiIdle", m.state)
+	}
+	if m.input != "черновик" {
+		t.Fatalf("esc should restore the input line, got %q", m.input)
+	}
+	if m.cursorPos != runeSliceLen("черновик") {
+		t.Fatalf("cursorPos = %d after restore", m.cursorPos)
+	}
+}
+
+func TestPaletteBackspaceEditsQuery(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = press(m, keyText("h"))
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if m.input != "" {
+		t.Fatalf("backspace should erase the query, got %q", m.input)
+	}
+	// Typing resets the selection so the highlight stays on a real candidate.
+	m = press(m, keyText("ex"))
+	items := paletteMatches(m.input)
+	if m.paletteIdx != 0 || m.paletteIdx >= len(items) {
+		t.Fatalf("selection = %d, candidates = %d", m.paletteIdx, len(items))
+	}
+}
+
+func TestPaletteSwitchesMode(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  config.Mode
+		label string
+	}{
+		{"mode:ai", config.ModeAI, "ai"},
+		{"mode:help", config.ModeHelp, "help"},
+		{"mode:shell", config.ModeShell, "terminal"},
+	} {
+		m := newTestTui()
+		m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		m = press(m, keyText(tc.query))
+		mm, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		got := mm.(tuiModel)
+		if got.rf.cfg.Mode != tc.want {
+			t.Fatalf("query %q: mode = %q, want %q", tc.query, got.rf.cfg.Mode, tc.want)
+		}
+		if got.modeLabel != tc.label {
+			t.Fatalf("query %q: modeLabel = %q, want %q", tc.query, got.modeLabel, tc.label)
+		}
+		if got.s.cfg.Mode != tc.want {
+			t.Fatalf("query %q: session mode = %q, want %q", tc.query, got.s.cfg.Mode, tc.want)
+		}
+	}
+}
+
+func TestPaletteRowsFitWidth(t *testing.T) {
+	m := newTestTui()
+	m.width = 40
+	m.height = 24
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	for _, row := range m.paletteRows() {
+		if w := displayWidth(row); w > m.width {
+			t.Fatalf("palette row is %d wide, want <= %d: %q", w, m.width, row)
+		}
+	}
+}
+
+func TestPaletteNoMatchKeepsPaletteOpen(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = press(m, keyText("zzz"))
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := mm.(tuiModel)
+	if got.state != tuiPalette {
+		t.Fatalf("no match should keep the palette open, state = %d", got.state)
+	}
+	if cmd != nil {
+		t.Fatal("no match must not run anything")
+	}
+	if !strings.Contains(strings.Join(m.paletteRows(), "\n"), "no matching command") {
+		t.Fatal("empty result should say so")
+	}
+}
+
+func TestCtrlQQuits(t *testing.T) {
+	m := newTestTui()
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+q: expected a quit command")
+	}
+	got := mm.(tuiModel)
+	if !strings.Contains(got.content, "bye!") {
+		t.Fatalf("ctrl+q should print bye!, content: %q", got.content)
+	}
+}
+
+func TestCtrlQQuitsWhileStreaming(t *testing.T) {
+	m := newTestTui()
+	m.streaming = true
+	m.state = tuiStreaming
+	stopped := false
+	m.streamCancel = func() { stopped = true }
+	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+q during streaming: expected a quit command")
+	}
+	if !stopped {
+		t.Fatal("ctrl+q must cancel the in-flight inference")
+	}
+}
+
+func TestF1WorksInEveryState(t *testing.T) {
+	states := []tuiState{tuiIdle, tuiModelMenu, tuiSearch, tuiConfirming, tuiQuestion, tuiStreaming, tuiPalette}
+	// F1 reaches us as tea.KeyF1; some terminals add shift, so both
+	// spellings must be handled.
+	keys := []tea.KeyPressMsg{
+		{Code: tea.KeyF1},
+		{Code: tea.KeyF1, Mod: tea.ModShift},
+	}
+	for _, st := range states {
+		for _, key := range keys {
+			m := newTestTui()
+			m.state = st
+			mm, cmd := m.handleKey(key)
+			if cmd != nil {
+				t.Fatalf("state %d, key %q: F1 must not return a command", st, key.Keystroke())
+			}
+			got := mm.(tuiModel)
+			if !strings.Contains(got.content, "dmsh help") {
+				t.Fatalf("state %d, key %q: F1 should show help, content:\n%s", st, key.Keystroke(), got.content)
+			}
+		}
+	}
+}
+
+func TestShiftTabCyclesModes(t *testing.T) {
+	want := []config.Mode{config.ModeHelp, config.ModeShell, config.ModeAI, config.ModeHelp}
+	m := newTestTui()
+	if m.rf.cfg.Mode != config.ModeAI {
+		t.Fatalf("test setup: mode = %q, want ai", m.rf.cfg.Mode)
+	}
+	for i, w := range want {
+		m = press(m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+		if m.rf.cfg.Mode != w {
+			t.Fatalf("shift+tab #%d: mode = %q, want %q", i+1, m.rf.cfg.Mode, w)
+		}
+		if m.s.cfg.Mode != w {
+			t.Fatalf("shift+tab #%d: session mode = %q, want %q", i+1, m.s.cfg.Mode, w)
+		}
+		if m.modeLabel != modeLabel(w) {
+			t.Fatalf("shift+tab #%d: modeLabel = %q, want %q", i+1, m.modeLabel, modeLabel(w))
+		}
+	}
+}
+
+func TestTabStillCompletesAfterShiftTabSupport(t *testing.T) {
+	m := newTestTui()
+	m.input = "/hi"
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.input != "/history" {
+		t.Fatalf("plain tab must still complete, input = %q", m.input)
+	}
+	if m.rf.cfg.Mode != config.ModeAI {
+		t.Fatalf("plain tab must not change the mode, got %q", m.rf.cfg.Mode)
+	}
+}
+
+func TestSlashNumericModesAreGone(t *testing.T) {
+	for _, gone := range []string{"/1", "/2", "/3", "/mode 1", "/mode 2", "/mode 3"} {
+		if IsModeCommand(gone) {
+			t.Errorf("%q must no longer be a mode command", gone)
+		}
+		if ParseModeCommand(gone) != "" {
+			t.Errorf("%q must not resolve to a mode", gone)
+		}
+		for _, c := range slashCommands {
+			if c == gone {
+				t.Errorf("%q must be removed from the slash menu", gone)
+			}
+		}
+	}
+	for _, kept := range []string{"/mode", "/mode ai", "/mode help", "/mode shell"} {
+		if !IsModeCommand(kept) {
+			t.Errorf("%q should still be a mode command", kept)
+		}
+	}
+}
+
+func TestShiftTabHintsForTerminalMode(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}) // -> help
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}) // -> shell
+	if m.rf.cfg.Mode != config.ModeShell {
+		t.Fatalf("mode = %q, want shell", m.rf.cfg.Mode)
+	}
+	if !strings.Contains(m.content, "terminal") {
+		t.Fatalf("terminal mode should say how to open a shell:\n%s", m.content)
+	}
+}
+
+func TestHelpModeHintDisablesRunCommand(t *testing.T) {
+	m := newTestTui()
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}) // -> help
+	if !strings.Contains(m.content, "run_command is disabled") {
+		t.Fatalf("help mode should warn that run_command is off:\n%s", m.content)
 	}
 }
 
@@ -407,22 +689,223 @@ func TestHistorySearch(t *testing.T) {
 	}
 }
 
+// Режим терминала никогда не обращается к модели: команда уходит в
+// псевдотерминал, а не в LLM.
 func TestShellModeNoLLM(t *testing.T) {
 	m := newTestTui()
 	m.rf.cfg.Mode = config.ModeShell
-	m.modeLabel = string(config.ModeShell)
+	m.modeLabel = modeLabel(config.ModeShell)
 	m.input = "pwd date"
 	m.cursorPos = 8
 	mm, cmd := m.handleEnter()
-	if cmd != nil {
-		t.Fatal("shell mode must not submit to the LLM")
-	}
 	m = mm.(tuiModel)
 	if m.streaming || m.state == tuiStreaming {
 		t.Fatal("shell mode must not enter streaming/LLM state")
 	}
 	if !strings.Contains(m.content, "$ pwd date") {
 		t.Fatalf("shell mode should echo the executed command, content:\n%s", m.content)
+	}
+	// Команда возвращается как terminalRanMsg, а не как запрос к модели.
+	if cmd == nil {
+		t.Fatal("terminal mode should return a command to run in the pty")
+	}
+	msg := cmd()
+	ran, ok := msg.(terminalRanMsg)
+	if !ok {
+		t.Fatalf("expected terminalRanMsg, got %T", msg)
+	}
+	if ran.command != "pwd date" {
+		t.Fatalf("command = %q, want %q", ran.command, "pwd date")
+	}
+}
+
+func TestTerminalModeEmptyLineOpensShell(t *testing.T) {
+	m := newTestTui()
+	m.rf.cfg.Mode = config.ModeShell
+	m.modeLabel = modeLabel(config.ModeShell)
+	m.rf.cfg.Shell = testShell()
+	mm, cmd := m.handleEnter()
+	m = mm.(tuiModel)
+	if cmd == nil {
+		t.Fatal("empty line in terminal mode should open a shell")
+	}
+	if m.streaming || m.state == tuiStreaming {
+		t.Fatal("opening a shell must not touch the LLM")
+	}
+}
+
+func TestTerminalModePrintsOutputAndAudits(t *testing.T) {
+	m := newTestTui()
+	m.rf.cfg.Mode = config.ModeShell
+	m.modeLabel = modeLabel(config.ModeShell)
+	m.s.cfg.AuditFile = ""
+	mm, _ := m.Update(terminalRanMsg{command: "ls -la", output: "file.txt", code: 0})
+	got := mm.(tuiModel)
+	if !strings.Contains(got.content, "file.txt") {
+		t.Fatalf("command output should reach the transcript:\n%s", got.content)
+	}
+	if got.state != tuiIdle {
+		t.Fatalf("state = %d after the command, want tuiIdle", got.state)
+	}
+	if len(got.s.recent) == 0 || got.s.recent[len(got.s.recent)-1] != "ls -la" {
+		t.Fatalf("command should be recorded in recent: %v", got.s.recent)
+	}
+
+	mm, _ = m.Update(terminalRanMsg{command: "false", output: "", code: 3})
+	got = mm.(tuiModel)
+	if !strings.Contains(got.content, "exit 3") {
+		t.Fatalf("non-zero exit should be reported:\n%s", got.content)
+	}
+}
+
+// Палитра — единая точка входа: всё, что она показывает, должно
+// существовать как слэш-команда (или как запись режима).
+func TestPaletteEntriesAllResolvable(t *testing.T) {
+	for _, it := range paletteItems {
+		cmd := it.paletteCommand()
+		if it.key != "" {
+			// Записи режима идут через /mode.
+			if !IsModeCommand(cmd) {
+				t.Errorf("palette entry %q maps to %q, which is not a mode command", it.name, cmd)
+			}
+			if ParseModeCommand(cmd) == "" {
+				t.Errorf("palette entry %q maps to %q, which resolves to no mode", it.name, cmd)
+			}
+			continue
+		}
+		known := false
+		for _, c := range slashCommands {
+			if c == cmd {
+				known = true
+				break
+			}
+		}
+		if !known {
+			t.Errorf("palette entry %q maps to %q, which is not in slashCommands", it.name, cmd)
+		}
+		if slashDesc[cmd] == "" {
+			t.Errorf("palette entry %q has no description in slashDesc", cmd)
+		}
+	}
+}
+
+// Статусная строка и F1 должны быть согласованы с тем, что реально
+// работает: иначе подсказки врут.
+func TestStatuslineHintsMatchRealBindings(t *testing.T) {
+	m := newTestTui()
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyF1},
+		{Code: 'p', Mod: tea.ModCtrl},
+		{Code: 'q', Mod: tea.ModCtrl},
+	} {
+		m = newTestTui()
+		mm, cmd := m.handleKey(key)
+		got := mm.(tuiModel)
+		switch key.Keystroke() {
+		case "f1":
+			if !strings.Contains(got.content, "dmsh help") {
+				t.Errorf("statusline advertises F1 but it does not show help")
+			}
+		case "ctrl+q":
+			if cmd == nil {
+				t.Errorf("statusline advertises Ctrl+Q but it does not quit")
+			}
+		case "ctrl+p":
+			if got.state != tuiPalette {
+				t.Errorf("statusline advertises Ctrl+P but it does not open the palette")
+			}
+		}
+	}
+}
+
+func TestShellSlashCommandSwitchesToTerminalMode(t *testing.T) {
+	m := newTestTui()
+	m.rf.cfg.Shell = testShell()
+	mm, cmd := m.handleSlash("/shell")
+	got := mm.(tuiModel)
+	if got.rf.cfg.Mode != config.ModeShell {
+		t.Fatalf("mode = %q, want shell so the session matches the opened shell", got.rf.cfg.Mode)
+	}
+	if cmd == nil {
+		t.Fatal("/shell should return a command to hand the terminal over")
+	}
+}
+
+// Мусор от оболочки не должен попадать в транскрипт: в выводе PTY остаются
+// приглашения, эхо введённых строк и escape-последовательности.
+func TestStripShellNoise(t *testing.T) {
+	// Реальный вывод PowerShell из-под ConPTY.
+	powershell := "\x1b[?9001h\x1b[?25l\x1b[2J\x1b[m\x1b[H" +
+		"PS D:\\dmsh> echo dmsh-marker\r\n" +
+		"dmsh-marker\r\n" +
+		"PS D:\\dmsh> exit\r\n" +
+		"\x1b[?9001l"
+	if got, want := stripShellNoise(ansi.Strip(powershell), "echo dmsh-marker"), "dmsh-marker"; got != want {
+		t.Errorf("powershell output = %q, want %q", got, want)
+	}
+
+	bash := "user@host:~$ ls -la\r\ntotal 0\r\ndrwxr-xr-x 2 root root 40 .\r\nuser@host:~$ exit\r\n"
+	if got, want := stripShellNoise(ansi.Strip(bash), "ls -la"), "total 0\ndrwxr-xr-x 2 root root 40 ."; got != want {
+		t.Errorf("bash output = %q, want %q", got, want)
+	}
+
+	// Оболочка не отэхоила команду — выживает всё, кроме чистых приглашений.
+	noEcho := "PS D:\\dmsh> \r\nresult line\r\n"
+	if got, want := stripShellNoise(noEcho, "whatever"), "result line"; got != want {
+		t.Errorf("no-echo output = %q, want %q", got, want)
+	}
+}
+
+// Реальный вывод терминального режима: команда + выход из оболочки.
+func TestStartTerminalCommandStripsShellNoise(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns an interactive shell")
+	}
+	m := newTestTui()
+	m.rf.cfg.Mode = config.ModeShell
+	m.modeLabel = modeLabel(config.ModeShell)
+	m.rf.cfg.Shell = testShell()
+
+	mm, cmd := m.startTerminalCommand("echo dmsh-tui-marker")
+	if cmd == nil {
+		t.Fatal("expected a command to run")
+	}
+	msg, ok := cmd().(terminalRanMsg)
+	if !ok {
+		t.Fatal("expected terminalRanMsg")
+	}
+	if msg.err != nil {
+		t.Fatalf("run failed: %v", msg.err)
+	}
+	if !strings.Contains(msg.output, "dmsh-tui-marker") {
+		t.Fatalf("output should contain the command result, got %q", msg.output)
+	}
+	if strings.Contains(msg.output, ">") {
+		t.Fatalf("shell prompts leaked into the transcript: %q", msg.output)
+	}
+	if strings.Contains(msg.output, "\x1b[") {
+		t.Fatalf("escape sequences leaked into the transcript: %q", msg.output)
+	}
+
+	got := mm.(tuiModel)
+	got.printTerminalRun(msg)
+	if strings.Contains(got.content, ">") && strings.Contains(got.content, "PS ") {
+		t.Fatalf("transcript polluted with shell prompts:\n%s", got.content)
+	}
+}
+
+func TestResumeFromShellReportsExit(t *testing.T) {
+	m := newTestTui()
+	m.rf.cfg.Mode = config.ModeShell
+	m.modeLabel = modeLabel(config.ModeShell)
+	m.rf.cfg.Shell = testShell()
+	mm, _ := m.Update(shellExitedMsg{code: 0})
+	got := mm.(tuiModel)
+	if got.state != tuiIdle {
+		t.Fatalf("state = %d after leaving the shell, want tuiIdle", got.state)
+	}
+	if !strings.Contains(got.content, "shell exited") {
+		t.Fatalf("leaving the shell should be reported:\n%s", got.content)
 	}
 }
 
@@ -480,6 +963,9 @@ func TestStatuslineShowsRealModel(t *testing.T) {
 	}
 	if !strings.Contains(s, "F1") {
 		t.Fatalf("statusline should hint the F1 help: %s", s)
+	}
+	if !strings.Contains(s, "Ctrl+P") {
+		t.Fatalf("statusline should hint the command palette: %s", s)
 	}
 	if strings.Contains(s, "ctrl-d") || strings.Contains(s, "ctrl-p") || strings.Contains(s, "/help") || strings.Contains(s, "!cmd") || strings.Contains(s, "ctrl-r") {
 		t.Fatalf("statusline should stay minimal (no ctrl-d/ctrl-p/!cmd/ctrl-r): %s", s)
@@ -645,15 +1131,257 @@ func TestScrollPgUpPgDown(t *testing.T) {
 	}
 }
 
-func TestScrollKeyWhenInputHasTextFallsBackToHistory(t *testing.T) {
+func TestArrowsDoNotScrollWhileTyping(t *testing.T) {
 	m := newTestTui()
 	m.input = "hello"
 	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.input != "hello" {
-		t.Fatalf("input changed while typing: %q", m.input)
+		t.Fatalf("empty history must leave the input alone, got %q", m.input)
 	}
 	if m.scrollOffset != 0 {
 		t.Fatalf("scrollOffset changed while typing: %d", m.scrollOffset)
+	}
+}
+
+// Стрелки листают историю всегда, в том числе на пустой строке ввода:
+// иначе ↑ на пустом промпте (самый частый случай) не работает вовсе.
+func TestArrowsWalkHistoryOnEmptyInput(t *testing.T) {
+	m := newTestTui()
+	m.history = []string{"first", "second"}
+	m.histIdx = len(m.history)
+
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.input != "second" {
+		t.Fatalf("up on empty input: input = %q, want %q", m.input, "second")
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.input != "first" {
+		t.Fatalf("second up: input = %q, want %q", m.input, "first")
+	}
+	// Выше начала не заворачиваем.
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.input != "first" {
+		t.Fatalf("up past the start wrapped to %q", m.input)
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.input != "second" {
+		t.Fatalf("down: input = %q, want %q", m.input, "second")
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.input != "" {
+		t.Fatalf("down past the end = %q, want empty", m.input)
+	}
+}
+
+// Стрелки не должны двигать скролл: скролл живёт на PgUp/PgDn.
+func TestArrowsDoNotScroll(t *testing.T) {
+	m := newTestTui()
+	m.width = 80
+	m.height = 10
+	for i := 0; i < 50; i++ {
+		m.addLine(fmt.Sprintf("line %02d", i))
+	}
+	m.history = []string{"cmd"}
+	m.histIdx = 1
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.scrollOffset != 0 {
+		t.Fatalf("up must not scroll, scrollOffset = %d", m.scrollOffset)
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.scrollOffset != 0 {
+		t.Fatalf("down must not scroll, scrollOffset = %d", m.scrollOffset)
+	}
+}
+
+// PgUp/PgDn скроллят вывод независимо от того, есть ли текст в строке ввода.
+func TestPgUpPgDownScrollAlways(t *testing.T) {
+	m := newTestTui()
+	m.width = 80
+	m.height = 10
+	for i := 0; i < 100; i++ {
+		m.addLine(fmt.Sprintf("line %03d", i))
+	}
+	m.scrollOffset = 90
+	m.input = "half-typed"
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if m.scrollOffset >= 90 {
+		t.Fatalf("pgup should scroll even with text in the input: %d", m.scrollOffset)
+	}
+	before := m.scrollOffset
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if m.scrollOffset <= before {
+		t.Fatalf("pgdown should scroll forward: %d -> %d", before, m.scrollOffset)
+	}
+}
+
+// История подтягивается из файла прошлых сессий: без этого стрелки видят
+// только текущую сессию.
+func TestHistoryLoadsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	histFile := filepath.Join(dir, "history.jsonl")
+	write := func(cmds ...string) {
+		var sb strings.Builder
+		for _, c := range cmds {
+			data, _ := json.Marshal(HistoryEntry{Timestamp: time.Now(), Command: c, Source: "direct"})
+			sb.WriteString(string(data) + "\n")
+		}
+		if err := os.WriteFile(histFile, []byte(sb.String()), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Подряд идущие дубликаты схлопываются. Неподрядные повторы сохраняются:
+	// один и тот же Enter дважды подряд — один шаг истории, а та же команда
+	// вперемешку с другими — это два разных запуска.
+	write("old-cmd", "old-cmd", "older-cmd", "old-cmd")
+
+	rf := &rootFlags{cfg: config.Config{Mode: config.ModeAI}}
+	s := &session{cfg: config.Config{Mode: config.ModeAI, HistoryFile: histFile}}
+	m := NewTuiModel(rf, s).(tuiModel)
+
+	// Порядок файла сохранён как есть; схлопнулась только соседняя пара.
+	want := []string{"old-cmd", "older-cmd", "old-cmd"}
+	if len(m.history) != len(want) {
+		t.Fatalf("history = %v, want %v", m.history, want)
+	}
+	for i, w := range want {
+		if m.history[i] != w {
+			t.Fatalf("history = %v, want %v", m.history, want)
+		}
+	}
+	if m.histIdx != len(m.history) {
+		t.Fatalf("histIdx = %d, want %d (past the end, ready to walk back)", m.histIdx, len(m.history))
+	}
+	// Стрелка вверх сразу подставляет последнюю выполненную команду.
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.input != "old-cmd" {
+		t.Fatalf("up after load: input = %q, want %q", m.input, "old-cmd")
+	}
+}
+
+// Повтор той же команды не раздувает историю.
+func TestRepeatedCommandNotDuplicated(t *testing.T) {
+	m := newTestTui()
+	m.history = []string{"ls"}
+	m.histIdx = 1
+	m.input = "ls"
+	m.cursorPos = 2
+	mm, _ := m.handleEnter()
+	got := mm.(tuiModel)
+	if len(got.history) != 1 || got.history[0] != "ls" {
+		t.Fatalf("history = %v, want a single %q", got.history, "ls")
+	}
+	m2 := newTestTui()
+	m2.input = "pwd"
+	m2.cursorPos = 3
+	mm2, _ := m2.handleEnter()
+	got2 := mm2.(tuiModel)
+	if len(got2.history) != 1 || got2.history[0] != "pwd" {
+		t.Fatalf("history = %v, want a single %q", got2.history, "pwd")
+	}
+}
+
+// /history показывает записи из файла вместе с текущей сессией, а не только
+// последние 10 выполненных команд.
+func TestSlashHistoryShowsFileAndSession(t *testing.T) {
+	dir := t.TempDir()
+	histFile := filepath.Join(dir, "history.jsonl")
+	var sb strings.Builder
+	for _, c := range []string{"file-1", "file-2"} {
+		data, _ := json.Marshal(HistoryEntry{Timestamp: time.Now(), Command: c, Source: "direct"})
+		sb.WriteString(string(data) + "\n")
+	}
+	if err := os.WriteFile(histFile, []byte(sb.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	rf := &rootFlags{cfg: config.Config{Mode: config.ModeAI}}
+	s := &session{cfg: config.Config{Mode: config.ModeAI, HistoryFile: histFile}}
+	m := NewTuiModel(rf, s).(tuiModel)
+	s.addHistory("session-1", "direct")
+
+	mm, _ := m.handleSlash("/history")
+	got := mm.(tuiModel)
+	for _, want := range []string{"file-1", "file-2", "session-1"} {
+		if !strings.Contains(got.content, want) {
+			t.Fatalf("/history should list %q, content:\n%s", want, got.content)
+		}
+	}
+}
+
+// Модель может сколько угодно возвращать неработающую команду. Без
+// ограничения каждая попытка — новый запрос и новый запуск, то есть цикл
+// намертво зависает на «thinking…».
+func TestAutoCorrectStopsAfterLimit(t *testing.T) {
+	m := newTestTui()
+	m.width = 100
+	m.height = 20
+	m.s.engine = &captureEngine{}
+	resp := prompt.Response{
+		Intent:  prompt.IntentRunCommand,
+		Command: "exit 3",
+		Risk:    prompt.RiskLow,
+	}
+	fail := executor.Result{ExitCode: 3, Err: context.DeadlineExceeded}
+
+	attempts := 0
+	for {
+		attempts++
+		if attempts > maxAutoFix+3 {
+			t.Fatalf("цикл не остановился: лимит %d, а запросов %d", maxAutoFix, attempts)
+		}
+		mm, cmd := m.autoCorrect(resp, fail)
+		m = mm
+		if cmd == nil {
+			break
+		}
+		if m.state != tuiStreaming {
+			break
+		}
+	}
+
+	if attempts != maxAutoFix+1 {
+		t.Fatalf("запросов на исправление = %d, want %d (%d попыток + одно сообщение о сдаче)",
+			attempts, maxAutoFix+1, maxAutoFix)
+	}
+	if m.state != tuiIdle {
+		t.Fatalf("после сдачи state = %d, want tuiIdle", m.state)
+	}
+	if !strings.Contains(m.content, "giving up on auto-fix") {
+		t.Fatalf("пользователь должен знать, что автокоррекция исчерпана:\n%s", m.content)
+	}
+}
+
+// Успешная команда возвращает лимит автокоррекции в полное состояние.
+func TestAutoCorrectBudgetResetsOnSuccess(t *testing.T) {
+	m := newTestTui()
+	m.width = 100
+	m.height = 20
+	m.fixTries = 1
+	resp := prompt.Response{
+		Intent:  prompt.IntentRunCommand,
+		Command: "echo dmsh-auto-fix-marker",
+		Risk:    prompt.RiskLow,
+	}
+	got, _ := m.runCommand(resp)
+	if got.fixTries != 0 {
+		t.Fatalf("fixTries = %d after a successful command, want 0", got.fixTries)
+	}
+	if !strings.Contains(got.content, "dmsh-auto-fix-marker") {
+		t.Fatalf("command output missing:\n%s", got.content)
+	}
+}
+
+// Новый запрос пользователя начинает цикл автокоррекции заново.
+func TestNewRequestResetsAutoFixBudget(t *testing.T) {
+	m := newTestTui()
+	m.s.engine = &captureEngine{}
+	m.fixTries = maxAutoFix
+	m.input = "ls"
+	m.cursorPos = 2
+	mm, _ := m.handleEnter()
+	got := mm.(tuiModel)
+	if got.fixTries != 0 {
+		t.Fatalf("fixTries = %d after a new request, want 0", got.fixTries)
 	}
 }
 

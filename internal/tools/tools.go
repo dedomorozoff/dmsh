@@ -117,6 +117,27 @@ func (r *Registry) Specs() []llm.ToolSpec {
 	return out
 }
 
+// SpecsWithout возвращает схемы всех инструментов, кроме перечисленных.
+// Нужен там, где набор инструментов зависит от режима: в help-режиме
+// run_command не должен попадать в схемы вообще, иначе модель всё равно
+// его видит и пытается звать.
+func (r *Registry) SpecsWithout(skip ...string) []llm.ToolSpec {
+	excluded := make(map[string]bool, len(skip))
+	for _, name := range skip {
+		excluded[name] = true
+	}
+	out := make([]llm.ToolSpec, 0, len(r.order))
+	for _, name := range r.order {
+		if excluded[name] {
+			continue
+		}
+		if it, ok := r.items[name]; ok {
+			out = append(out, it.spec)
+		}
+	}
+	return out
+}
+
 // Has сообщает, что инструмент зарегистрирован.
 func (r *Registry) Has(name string) bool {
 	_, ok := r.items[name]

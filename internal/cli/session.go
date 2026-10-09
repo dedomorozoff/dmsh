@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dedomorozoff/dmsh/internal/config"
@@ -51,13 +52,19 @@ type SessionStats struct {
 
 // session инкапсулирует движок и собранный для него контекст промпта.
 // Один session живёт всё время REPL или одной CLI-команды.
+//
+// mu защищает состояние, к которому пишет горутина стрима (askStream),
+// пока UI читает и правит его же: отмена запроса по Esc не ждёт завершения
+// askStream, поэтому новый запрос может пересечься со старым. Это же делает
+// showStats безопасным во время стрима.
 type session struct {
-	cfg      config.Config
-	provider config.Provider
-	notice   string
-	engine   llm.Engine
-	tools    *tools.Registry
-	todos    *tools.TodoStore
+	mu        sync.Mutex
+	cfg       config.Config
+	provider  config.Provider
+	notice    string
+	engine    llm.Engine
+	tools     *tools.Registry
+	todos     *tools.TodoStore
 	// searchEngine обслуживает инструмент websearch. Он создаётся лениво и
 	// использует отдельную search-модель того же провайдера.
 	searchEngine llm.Engine
@@ -71,6 +78,37 @@ type session struct {
 	turns        []prompt.Turn // последние 5 пар диалога
 	stdinCtx     string        // данные из stdin pipe
 	autoYes      bool          // --yes: пропускать все подтверждения
+}
+
+// recordRequest запоминает запрос пользователя и увеличивает счётчик.
+// Вызывается из горутины стрима, поэтому под mu.
+func (s *session) recordRequest(input string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats.Requests++
+	s.lastInput = input
+}
+
+// lastRequest возвращает последний запрос пользователя (/retry, уточнения).
+func (s *session) lastRequest() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastInput
+}
+
+// addFixNote считает автокоррекцию: пишет из UI, читает /stats.
+func (s *session) addFixNote() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats.ErrorsFix++
+}
+
+// snapshotStats возвращает копию статистики — без блокировки на стороне
+// вызывающего.
+func (s *session) snapshotStats() SessionStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stats
 }
 
 // newToolRegistry собирает набор инструментов для текущей сессии.
@@ -273,6 +311,18 @@ func (s *session) confirmOK(out io.Writer, promptText string) (bool, error) {
 	return confirm(s.input, out, s, promptText)
 }
 
+// historyEntries возвращает историю для показа: сначала она уже накоплена в
+// этой сессии, а текущая сессия ещё не сброшена в файл. Поэтому записи
+// текущей сессии дописываются в конец файловых, иначе /history терял бы всё,
+// что сделано в dmsh прямо сейчас.
+func (s *session) historyEntries() []HistoryEntry {
+	fileEntries, err := loadHistoryEntries(s.cfg.HistoryFile)
+	if err != nil {
+		fileEntries = nil
+	}
+	return append(fileEntries, s.hist[s.savedHist:]...)
+}
+
 // saveHistory дописывает в файл только новые (ещё не сохранённые) записи.
 // Это предотвращает дублирование при повторном вызове close() и позволяет
 // файлу расти постепенно. Обрезка до 1000 строк выполняется раз в 500 новых
@@ -377,6 +427,8 @@ func (s *session) addRecent(cmd string) {
 func (s *session) addRecentAndHistory(cmd, source string) {
 	s.addRecent(cmd)
 	s.addHistory(cmd, source)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if source == "llm" {
 		s.stats.CommandsLLM++
 	} else {
@@ -384,8 +436,11 @@ func (s *session) addRecentAndHistory(cmd, source string) {
 	}
 }
 
-// addTurn добавляет пару диалога (последние 5 пар).
+// addTurn добавляет пару диалога (последние 5 пар). Пишет горутина стрима,
+// а читает askStream при сборке следующего промпта.
 func (s *session) addTurn(user, assistant string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.turns = append(s.turns, prompt.Turn{User: user, Assistant: assistant})
 	if len(s.turns) > 5 {
 		s.turns = s.turns[len(s.turns)-5:]
@@ -447,8 +502,7 @@ func (s *session) saveTurns() {
 
 // askStream отправляет запрос модели и стримит вывод полей на экран в реальном времени.
 func (s *session) askStream(ctx context.Context, mode, userInput string, out io.Writer) (prompt.Response, string, error) {
-	s.stats.Requests++
-	s.lastInput = userInput
+	s.recordRequest(userInput)
 	cwd, _ := os.Getwd()
 	pctx := prompt.Context{
 		OS:           osName(),

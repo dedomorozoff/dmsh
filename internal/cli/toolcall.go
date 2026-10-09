@@ -45,7 +45,7 @@ func (s *session) chatWithTools(
 	pr *streamPrinter,
 	out io.Writer,
 ) error {
-	specs := s.tools.Specs()
+	specs := s.toolSpecs()
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: system},
 		{Role: llm.RoleUser, Content: user},
@@ -263,6 +263,29 @@ func (s *session) searchModel() string {
 	return config.DefaultSearchModel
 }
 
+// toolSpecs возвращает схемы инструментов, видимые модели в текущем режиме.
+// В help-режиме run_command исключён: режим учит и ничего не выполняет, и
+// модель не должна даже видеть такую возможность.
+func (s *session) toolSpecs() []llm.ToolSpec {
+	if s.cfg.Mode == config.ModeHelp {
+		return s.tools.SpecsWithout(tools.NameRunCommand)
+	}
+	return s.tools.Specs()
+}
+
+// runCommandAllowed сообщает, можно ли выполнять команды прямо сейчас.
+// Проверяется и при объявлении схем, и при самом вызове: режим могли
+// переключить между двумя шагами диалога.
+func (s *session) runCommandAllowed() error {
+	if s.cfg.Mode == config.ModeHelp {
+		return errors.New("run_command is disabled in help mode: explain the command instead of running it")
+	}
+	if s.cfg.DryRun {
+		return errors.New("dry-run is enabled: commands are not executed, answer with the command in your JSON instead")
+	}
+	return nil
+}
+
 // promptToolNames возвращает имена инструментов, о которых стоит сказать
 // модели в системном промпте. Пусто, если tools не поддерживаются движком:
 // тогда промпт остаётся прежним, без упоминаний о несуществующих функциях.
@@ -270,7 +293,7 @@ func (s *session) promptToolNames() []string {
 	if _, ok := s.toolEngine(); !ok {
 		return nil
 	}
-	specs := s.tools.Specs()
+	specs := s.toolSpecs()
 	names := make([]string, 0, len(specs))
 	for _, spec := range specs {
 		names = append(names, spec.Name)
@@ -303,13 +326,8 @@ func (s *session) runCommandTool(ctx context.Context, call llm.ToolCall, out io.
 		return tools.EncodeResult(tools.Result{OK: false, Error: "command is required"})
 	}
 
-	// В dry-run инструменты не исполняют команды: модель получает отказ и
-	// должна вернуть команду в JSON-ответе.
-	if s.cfg.DryRun {
-		return tools.EncodeResult(tools.Result{
-			OK:    false,
-			Error: "dry-run is enabled: commands are not executed, answer with the command in your JSON instead",
-		})
+	if err := s.runCommandAllowed(); err != nil {
+		return tools.EncodeResult(tools.Result{OK: false, Error: err.Error()})
 	}
 
 	dec := policy.Evaluate(command, prompt.RiskMedium, s.cfg.DangerPatterns, s.cfg.SuspiciousPatterns)

@@ -167,11 +167,15 @@ with scrollback, live streaming and a status line. Three modes:
 
 - **AI** (default) — generates commands and executes them automatically
   after the safety check; anything non-trivial asks for confirmation.
-- **Help** — shows command + explanation, you run it yourself.
-- **Shell** — shell-like input passes straight to the OS; natural
-  language is still understood and routed through the model.
+- **Help** — shows command + explanation, you run it yourself. The
+  `run_command` tool is not even advertised to the model in this mode.
+- **Terminal** — a real shell session in a pseudo-terminal. Press Enter on
+  an empty line (or run `/shell`) and dmsh hands the whole terminal over to
+  your shell: colours, interactive programs and window size all work. Exit
+  the shell to return.
 
-Switch with `/mode ai|help|shell`, `/mode 1|2|3` or `/1`, `/2`, `/3`.
+Switch with `Shift+Tab` (cycles ai → help → terminal), the command palette
+on `Ctrl+P`, or `/mode ai|help|shell`.
 
 ### Slash commands
 
@@ -186,8 +190,9 @@ Switch with `/mode ai|help|shell`, `/mode 1|2|3` or `/1`, `/2`, `/3`.
 | `/cd [path]` | change directory |
 | `/pwd` | show current directory |
 | `/clear` | clear screen |
+| `/shell` | open a terminal session (also switches to terminal mode) |
 | `/bind keys` | show keybindings |
-| `/mode` | show/switch mode |
+| `/mode` | show/switch mode (`/mode ai|help|shell`) |
 | `!command` | execute command directly |
 | `/exit`, `/quit` | exit |
 
@@ -198,7 +203,9 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 
 | Key | Action |
 |-----|--------|
-| `F1` / `/help` | show help |
+| `F1` / `/help` | show help (works from any screen) |
+| `Ctrl+P` | command palette: every command and mode, filter by typing |
+| `Ctrl+Q` | exit |
 | `Esc` / `Ctrl+C` | cancel / stop streaming |
 | `Ctrl+A/E/U/K` | start/end/delete-to-start/delete-to-end of line |
 | `Ctrl+R/S` | history search |
@@ -206,11 +213,12 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `Alt+B/F/D` | move / delete by word |
 | `Ctrl+W` | delete word back |
 | `Ctrl+L` | clear screen |
-| `Ctrl+O` / `Ctrl+P` | model menu (install / switch model) |
+| `Ctrl+O` | model menu (install / switch model) |
 | `Tab` | complete slash command |
-| `↑/↓` | history or scroll (when input is empty) |
+| `Shift+Tab` | cycle modes: ai → help → terminal |
+| `↑/↓` | previous / next command from history (persisted across sessions) |
 | `PgUp/PgDn` | scroll output |
-| `/1`, `/2`, `/3` | switch AI / Help / Shell mode |
+| `Enter` (empty line, terminal mode) | hand the terminal over to a real shell |
 
 ## Other commands
 

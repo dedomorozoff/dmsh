@@ -555,6 +555,88 @@ func TestPromptToolNamesOnlyWhenEngineSupportsTools(t *testing.T) {
 	}
 }
 
+// В help-режиме модель не должна даже видеть run_command: режим учит и
+// ничего не выполняет.
+func TestHelpModeHidesRunCommandTool(t *testing.T) {
+	s := newToolSession(t, &toolFakeEngine{})
+	advertised := false
+	for _, spec := range s.toolSpecs() {
+		if spec.Name == tools.NameRunCommand {
+			advertised = true
+		}
+	}
+	if !advertised {
+		t.Fatal("ai mode must advertise run_command")
+	}
+
+	s.cfg.Mode = config.ModeHelp
+	for _, spec := range s.toolSpecs() {
+		if spec.Name == tools.NameRunCommand {
+			t.Fatal("run_command must not be advertised in help mode")
+		}
+	}
+	names := s.promptToolNames()
+	for _, n := range names {
+		if n == tools.NameRunCommand {
+			t.Fatalf("system prompt must not mention run_command in help mode: %v", names)
+		}
+	}
+	// Остальные инструменты остаются: читать файлы и искать в вебе полезно.
+	if len(names) != 6 {
+		t.Fatalf("help mode tool names = %v, want 6 (all but run_command)", names)
+	}
+}
+
+// Режим могут переключить между шагами диалога, поэтому проверка повторяется
+// на самом вызове инструмента.
+func TestHelpModeRefusesRunCommandCall(t *testing.T) {
+	s := newToolSession(t, &toolFakeEngine{})
+	s.setAutoYes(true)
+	s.cfg.Mode = config.ModeHelp
+
+	res := decodeToolResult(t, s.runToolCall(context.Background(),
+		llm.ToolCall{Name: tools.NameRunCommand, Arguments: `{"command":"echo dmsh-should-not-run"}`}, io.Discard))
+	if res.OK {
+		t.Fatal("run_command must fail in help mode")
+	}
+	if !strings.Contains(res.Error, "help mode") {
+		t.Fatalf("error should name the reason, got %q", res.Error)
+	}
+	if res.Content != "" {
+		t.Fatalf("nothing should have run, got output %q", res.Content)
+	}
+}
+
+func TestHelpModeRefusesRunCommandThroughEngine(t *testing.T) {
+	eng := &toolFakeEngine{replies: []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "c1", Type: "function", Name: tools.NameRunCommand, Arguments: `{"command":"echo dmsh-should-not-run"}`},
+		}},
+		{Role: llm.RoleAssistant, Content: `{"intent":"explain","explanation":"listed"}`},
+	}}
+	s := newToolSession(t, eng)
+	s.cfg.Mode = config.ModeHelp
+	s.setAutoYes(true)
+
+	var out strings.Builder
+	if _, _, err := s.askStream(context.Background(), "run", "list files", &out); err != nil {
+		t.Fatalf("askStream: %v", err)
+	}
+	if len(eng.calls) == 0 {
+		t.Fatal("engine was never called")
+	}
+	for _, spec := range eng.calls[0].Tools {
+		if spec.Name == tools.NameRunCommand {
+			t.Fatal("run_command reached the model in help mode")
+		}
+	}
+	for _, msg := range eng.calls[1].Messages {
+		if strings.Contains(msg.Content, "dmsh-should-not-run") {
+			t.Fatalf("the command must not have run: %q", msg.Content)
+		}
+	}
+}
+
 // В one-shot с пайпом stdin уходит в контекст, поэтому инструмент ask
 // модели не предлагается: задать вопрос уже некому.
 func TestAskUnregisteredWhenStdinPiped(t *testing.T) {

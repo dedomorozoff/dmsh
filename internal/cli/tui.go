@@ -26,6 +26,7 @@ const (
 	tuiQuestion
 	tuiSearch
 	tuiModelMenu
+	tuiPalette
 )
 
 type tuiModel struct {
@@ -66,6 +67,11 @@ type tuiModel struct {
 	tabMatches []string
 	tabIdx     int
 
+	// command palette (Ctrl+P): запрос живёт в обычной строке ввода,
+	// paletteSaved — то, что там было до открытия.
+	paletteSaved string
+	paletteIdx   int
+
 	// model menu (Ctrl+O)
 	modelItems    []modelMenuItem
 	modelIdx      int
@@ -77,22 +83,23 @@ type tuiModel struct {
 	modelDoneCh   chan modelDoneMsg
 
 	scrollOffset int
+
+	// fixTries считает автокоррекции подряд. Без счётчика модель, которая
+	// возвращает ту же падающую команду, запускает бесконечный цикл.
+	fixTries int
 }
 
 // slashCommands — commands offered by Tab completion and the "/" menu.
 // Mode switches come first so they are visible in the truncated menu.
 var slashCommands = []string{
-	"/1", "/2", "/3", "/mode",
-	"/help", "/clear", "/exit", "/quit",
+	"/mode", "/shell", "/help", "/clear", "/exit", "/quit",
 	"/history", "/cd", "/pwd", "/model", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
 var slashDesc = map[string]string{
-	"/1":       "shell mode (run commands directly)",
-	"/2":       "turn mode (ask the model each time)",
-	"/3":       "AI mode (auto-execute, default)",
 	"/mode":    "show or switch mode",
+	"/shell":   "open a real terminal session",
 	"/help":    "show help for commands and modes",
 	"/model":   "show the current model",
 	"/todo":    "show the model's task list",
@@ -160,7 +167,33 @@ func (w *tuiWriter) Write(p []byte) (int, error) {
 }
 
 func NewTuiModel(rf *rootFlags, s *session) tea.Model {
-	return tuiModel{rf: rf, s: s, errW: io.Discard, modeLabel: string(rf.cfg.Mode), content: "", tabIdx: -1}
+	m := tuiModel{rf: rf, s: s, errW: io.Discard, modeLabel: string(rf.cfg.Mode), content: "", tabIdx: -1}
+	m.history = m.persistedHistory()
+	m.histIdx = len(m.history)
+	return m
+}
+
+// persistedHistory читает историю прошлых сессий из файла. Стрелки вверх/вниз
+// листают по ней, поэтому без загрузки файла история была бы видна только
+// внутри одной сессии. Дубликаты подряд идущих одинаковых записей убираются:
+// один и тот же Enter, повторённый дважды, не должен занимать два шага.
+func (m tuiModel) persistedHistory() []string {
+	entries, err := loadHistoryEntries(m.s.cfg.HistoryFile)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		cmd := strings.TrimSpace(e.Command)
+		if cmd == "" {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == cmd {
+			continue
+		}
+		out = append(out, cmd)
+	}
+	return out
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -241,6 +274,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForModel(m.modelCh, m.modelDoneCh)
 		}
 		return m, nil
+	case shellExitedMsg:
+		m.resumeFromShell(msg)
+		return m, nil
+	case terminalRanMsg:
+		m.printTerminalRun(msg)
+		return m, nil
 	case modelDoneMsg:
 		m.modelBusy = false
 		m.modelProgress = -1
@@ -289,6 +328,11 @@ func (m tuiModel) View() tea.View {
 	case tuiModelMenu:
 		col = 0
 	default:
+		// Палитра рисует запрос без приглашения, поэтому не берём
+		// buildPrompt() за основу.
+		if m.state != tuiPalette {
+			col = displayWidth(m.buildPrompt())
+		}
 		for _, r := range []rune(m.input)[:min(m.cursorPos, runeSliceLen(m.input))] {
 			col += displayWidth(string(r))
 		}
@@ -372,9 +416,15 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 		bodyRows = append(bodyRows, hardWrap(l, m.width)...)
 	}
 
-	if m.state == tuiModelMenu {
+	switch m.state {
+	case tuiModelMenu:
 		inRows = m.menuRows()
-	} else if m.state != tuiConfirming && m.state != tuiSearch {
+	case tuiPalette:
+		// Палитра заменяет строку ввода: запрос уже отфильтрован.
+		inRows = m.paletteRows()
+	case tuiConfirming, tuiSearch:
+		// Обе строки живут в скроллбеке, отдельной строки ввода нет.
+	default:
 		inRows = hardWrap(m.buildPrompt()+m.input, m.width)
 		if m.streaming {
 			inRows = hardWrap(fmt.Sprintf("%s[dmsh] thinking…%s", colorCyan, colorReset), m.width)
@@ -472,7 +522,8 @@ func (m tuiModel) statusline() string {
 		colorCyan, shortName, colorReset,
 		colorYellow, m.modeLabel, colorReset,
 		gray, m.modelLabel())
-	right := fmt.Sprintf("%shelp%s %sF1%s",
+	right := fmt.Sprintf("%shelp%s %sF1%s   %spalette%s %sCtrl+P%s",
+		colorGray, colorReset, colorGray, colorReset,
 		colorGray, colorReset, colorGray, colorReset)
 	ls := displayWidth(left)
 	rs := displayWidth(right)
@@ -570,6 +621,21 @@ func displayWidth(s string) int {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Глобальные биндинги: работают в любом состоянии, включая меню,
+	// поиск, подтверждение и стриминг. Иначе подсказки в help и статусной
+	// строке врали бы в половине экранов.
+	// F1 матчится и по коду, и по строке: часть терминалов присылает
+	// shift+f1. Палитра не исключается — help нужен из любого экрана.
+	if msg.Code == tea.KeyF1 || msg.Keystroke() == "f1" {
+		m.showHelp()
+		return m, nil
+	}
+	if msg.Keystroke() == "ctrl+q" {
+		return m.quitTui()
+	}
+	if m.state == tuiPalette {
+		return m.handlePaletteKey(msg)
+	}
 	if m.state == tuiSearch {
 		return m.handleSearchKey(msg)
 	}
@@ -609,6 +675,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		return m.handleEnter()
 	case tea.KeyTab:
+		// Shift+Tab приходит как KeyTab с модификатором Shift: он занят
+		// под переключение режима, обычный Tab остаётся комплитом.
+		if msg.Mod&tea.ModShift != 0 {
+			m.cycleMode()
+			return m, nil
+		}
 		return m.handleTab()
 	case tea.KeyBackspace:
 		m.deleteBackward()
@@ -630,30 +702,20 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.menuSelect(-1) {
 			return m, nil
 		}
-		if m.input == "" {
-			m.scrollUp()
-			return m, nil
-		}
 		return m.handleHistoryPrev()
 	case tea.KeyDown:
 		if m.menuSelect(1) {
 			return m, nil
 		}
-		if m.input == "" {
-			m.scrollUp()
-			return m, nil
-		}
 		return m.handleHistoryNext()
+	// Скролл вывода больше не висит на стрелках: они целиком отданы истории.
+	// PgUp/PgDn работают всегда, независимо от содержимого строки ввода.
 	case tea.KeyPgUp:
-		if m.input == "" {
-			m.scrollBy(-(m.height - 3))
-			return m, nil
-		}
+		m.scrollBy(-(m.height - 3))
+		return m, nil
 	case tea.KeyPgDown:
-		if m.input == "" {
-			m.scrollBy(m.height - 3)
-			return m, nil
-		}
+		m.scrollBy(m.height - 3)
+		return m, nil
 	}
 	switch msg.Keystroke() {
 	case "ctrl+a":
@@ -668,9 +730,6 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.cursorPos < runeSliceLen(m.input) {
 			m.cursorPos++
 		}
-	case "ctrl+p":
-		// Model selection / download menu (same as Ctrl+O).
-		return m.openModelMenu(), nil
 	case "ctrl+n":
 		if m.menuSelect(1) {
 			return m, nil
@@ -718,10 +777,40 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cursorPos = nextWordPos(m.cursorPos, m.input)
 	case "alt+d":
 		m.input = deleteWordForward(m.input, &m.cursorPos)
-	case "f1":
-		m.showHelp()
+	case "ctrl+p":
+		return m.openPalette(), nil
 	}
 	return m, nil
+}
+
+// cycleMode переключает режим по кругу и печатает новый. Тот же путь, что
+// и у /mode: конфиг оболочки, конфиг сессии и подпись в статусной строке
+// должны разойтись не могут.
+func (m *tuiModel) cycleMode() {
+	next := nextMode(m.rf.cfg.Mode)
+	m.rf.cfg.Mode = next
+	m.s.cfg.Mode = next
+	m.modeLabel = modeLabel(next)
+	m.addLine(fmt.Sprintf("%s[dmsh] mode: %s%s", colorCyan, modeLabel(next), colorReset))
+	if next == config.ModeShell {
+		m.addLine(fmt.Sprintf("%spress Enter on an empty line to open a terminal%s", colorGray, colorReset))
+	}
+	if next == config.ModeHelp {
+		m.addLine(fmt.Sprintf("%srun_command is disabled in help mode%s", colorGray, colorReset))
+	}
+}
+
+// quitTui останавливает стриминг и завершает программу. Отмена контекста
+// нужна, чтобы не оставить инференс работать после выхода.
+func (m tuiModel) quitTui() (tea.Model, tea.Cmd) {
+	if m.streamCancel != nil {
+		m.streamCancel()
+		m.streamCancel = nil
+	}
+	m.streaming = false
+	m.state = tuiIdle
+	m.addLine("bye!")
+	return m, tea.Quit
 }
 
 // menuList возвращает текущий список меню: активную последовательность
@@ -888,9 +977,18 @@ func (m tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 	m.tabMatches = nil
 	m.tabIdx = -1
 	if line == "" {
+		// В режиме терминала пустая строка — не «ничего», а открытие
+		// настоящей оболочки с отданным терминалом.
+		if m.rf.cfg.Mode == config.ModeShell {
+			return m.openTerminal()
+		}
 		return m, nil
 	}
-	m.history = append(m.history, line)
+	// Повтор той же команды не добавляет новую запись: иначе стрелки
+	// вверх/вниз на долгих сессиях упираются в хвост из одинаковых строк.
+	if len(m.history) == 0 || m.history[len(m.history)-1] != line {
+		m.history = append(m.history, line)
+	}
 	m.histIdx = len(m.history)
 	if strings.HasPrefix(line, "/") {
 		return m.handleSlash(line)
@@ -902,13 +1000,16 @@ func (m tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.rf.cfg.Mode == config.ModeShell {
-		// Shell mode: run any input directly, never consult the LLM.
+		// Непустая строка выполняется в псевдотерминале: программам, которым
+		// нужен tty (цвета, интерактив, размер окна), достаётся настоящий
+		// терминал, а TUI остаётся на экране.
 		m.addLine(fmt.Sprintf("%s$ %s%s", colorCyan, line, colorReset))
-		m.executeDirect(line)
-		return m, nil
+		return m.startTerminalCommand(line)
 	}
-	// Новый запрос пользователя — новый диалог уточнений.
+	// Новый запрос пользователя — новый диалог уточнений и новый лимит
+	// автокоррекции.
 	m.clarify = clarification{}
+	m.fixTries = 0
 	return m.submitToLLM(line)
 }
 
@@ -930,6 +1031,16 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 				m.addLine(fmt.Sprintf("%s%s%s", colorRed, err, colorReset))
 			}
 		}
+	case line == "/shell", line == "terminal":
+		if m.rf.cfg.Mode != config.ModeShell {
+			// /shell вне режима терминала всё равно открывает сессию, но
+			// режим должен ей соответствовать, иначе следующий ввод снова
+			// уйдёт в модель.
+			m.rf.cfg.Mode = config.ModeShell
+			m.s.cfg.Mode = config.ModeShell
+			m.modeLabel = modeLabel(config.ModeShell)
+		}
+		return m.openTerminal()
 	case line == "/clear", line == "clear":
 		m.clearContent()
 		m.addLine("")
@@ -937,9 +1048,7 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		wd, _ := os.Getwd()
 		m.addLine(wd)
 	case line == "/history", line == "history":
-		for i, h := range m.s.recent {
-			m.addLine(fmt.Sprintf("%4d  %s", i+1, h))
-		}
+		m.showHistory()
 	case line == "/bind", line == "/bind keys":
 		m.showKeyBindings()
 	case line == "/stats":
@@ -952,27 +1061,26 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		handleTodo(strings.TrimSpace(strings.TrimPrefix(line, "/todo ")), io.Discard, m.s)
 		m.showTodo()
 	case line == "/retry":
-		if m.s.lastInput == "" {
+		lastInput := m.s.lastRequest()
+		if lastInput == "" {
 			m.addLine(fmt.Sprintf("%sNo previous request to retry.%s", colorYellow, colorReset))
 			return m, nil
 		}
 		m.clarify = clarification{}
-		return m.submitToLLM("Alternative approach needed. Previous attempt failed. " + m.s.lastInput)
+		return m.submitToLLM("Alternative approach needed. Previous attempt failed. " + lastInput)
 	case strings.HasPrefix(line, "/export"):
 		m.handleExport(line)
 	case strings.HasPrefix(line, "/alias"):
 		m.handleAlias(line)
 	case IsModeCommand(line):
-		ms := NewModeSwitcher(&m.rf.cfg, io.Discard)
 		if line == "/mode" {
-			m.addLine(fmt.Sprintf("Current mode: %s", m.rf.cfg.Mode))
+			m.addLine(fmt.Sprintf("Current mode: %s", modeLabel(m.rf.cfg.Mode)))
 			return m, nil
 		}
-		newMode := ParseModeCommand(line)
-		if newMode != "" {
-			ms.Switch(newMode)
-			m.modeLabel = string(newMode)
+		if newMode := ParseModeCommand(line); newMode != "" {
+			m.rf.cfg.Mode = newMode
 			m.s.cfg.Mode = newMode
+			m.modeLabel = modeLabel(newMode)
 		}
 	default:
 		m.addLine(fmt.Sprintf("%sunknown command: %s%s", colorRed, line, colorReset))
@@ -1080,6 +1188,8 @@ func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 	}
 	fb := feedback.Analyze(resp.Command, res.Stdout, res.Stderr, res.ExitCode)
 	if fb.Success {
+		// Команда удалась — цикл автокоррекции закончен, лимит снова полон.
+		m.fixTries = 0
 		if hint := fb.Format(); hint != "" {
 			m.addLine(fmt.Sprintf("\n%s[dmsh]%s %s%s%s", colorGreen, colorReset, colorGreen, hint, colorReset))
 		}
@@ -1088,14 +1198,35 @@ func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 	return m.autoCorrect(resp, res)
 }
 
+// maxAutoFix ограничивает автокоррекцию подряд. Модель может сколько угодно
+// возвращать неработающую команду; без предела каждая попытка — это новый
+// запрос к модели и новый запуск команды, то есть бесконечный цикл.
+const maxAutoFix = 2
+
+// autoCorrect просит модель исправить упавшую команду. Число попыток
+// ограничено: исчерпав лимит, останавливаемся и показываем, что делать
+// дальше, вместо того чтобы крутиться.
 func (m tuiModel) autoCorrect(resp prompt.Response, res executor.Result) (tuiModel, tea.Cmd) {
 	stderr := res.Stderr
 	if stderr == "" && res.Err != nil {
 		stderr = res.Err.Error()
 	}
-	m.addLine(fmt.Sprintf("\n%s[dmsh]%s Error detected (code %d). Requesting auto-correction from LLM...%s", colorYellow, colorReset, res.ExitCode, colorReset))
+	m.fixTries++
+	if m.fixTries > maxAutoFix {
+		m.fixTries = 0
+		m.state = tuiIdle
+		m.addLine(fmt.Sprintf("%s[dmsh]%s the command failed %d times, giving up on auto-fix", colorRed, colorReset, maxAutoFix))
+		if stderr != "" {
+			m.addLine(fmt.Sprintf("%s%s%s", colorGray, stderr, colorReset))
+		}
+		m.addLine(fmt.Sprintf("%srun the command yourself or rephrase the request%s", colorGray, colorReset))
+		return m, nil
+	}
+
+	m.addLine(fmt.Sprintf("\n%s[dmsh]%s Error detected (code %d). Requesting auto-correction from LLM (attempt %d/%d)...%s",
+		colorYellow, colorReset, res.ExitCode, m.fixTries, maxAutoFix, colorReset))
 	m.addLine(fmt.Sprintf("%s%s%s", gray, strings.Repeat("─", 40), colorReset))
-	m.s.stats.ErrorsFix++
+	m.s.addFixNote()
 	correctionInput := fmt.Sprintf("Command '%s' failed.\nExit code: %d\nStderr:\n%s\n\nPlease fix the command so it runs successfully on the current OS.", resp.Command, res.ExitCode, stderr)
 	// Автокоррекция — тоже новый запрос, уточнения сбрасываются.
 	m.clarify = clarification{}
@@ -1146,7 +1277,7 @@ func (m tuiModel) handleQuestionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.addLine(fmt.Sprintf("%s(stopped: the model kept asking — rephrase the request)%s", colorGray, colorReset))
 			return m, nil
 		}
-		followUp := m.clarify.followUp(m.s.lastInput, question, answer)
+		followUp := m.clarify.followUp(m.s.lastRequest(), question, answer)
 		m.state = tuiStreaming
 		return m.submitToLLMEcho(followUp, answer)
 	}
@@ -1195,7 +1326,7 @@ func (m *tuiModel) executeDirect(cmd string) {
 
 func (m tuiModel) handleHistoryPrev() (tea.Model, tea.Cmd) {
 	if len(m.history) == 0 {
-		m.addLine(fmt.Sprintf("%s(history is empty)%s", colorYellow, colorReset))
+		m.addLine(fmt.Sprintf("%s(history is empty — nothing has been run yet)%s", colorYellow, colorReset))
 		return m, nil
 	}
 	if m.histIdx > 0 {
@@ -1332,8 +1463,11 @@ func deleteWordForward(s string, pos *int) string {
 func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("%s=== dmsh help ===%s", colorBold+colorCyan, colorReset))
 	m.addLine(fmt.Sprintf("%sModes:%s", colorBold, colorReset))
-	m.addLine(fmt.Sprintf("  %s/1%s, %s/2%s, %s/3%s  — switch AI / Help / Shell mode", colorYellow, colorReset, colorYellow, colorReset, colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/mode%s        — show current mode", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sai%s     — generate a command and run it automatically", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %shelp%s   — command plus explanation, nothing is executed", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sterminal%s— a real shell session with the terminal handed over", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sShift+Tab%s — cycle modes, %sCtrl+P%s — pick one in the palette", colorYellow, colorReset, colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/mode%s [ai|help|shell] — show or set the mode", colorYellow, colorReset))
 	m.addLine("")
 	m.addLine(fmt.Sprintf("%sCommands:%s", colorBold, colorReset))
 	m.addLine(fmt.Sprintf("  %s!cmd%s         — run shell command directly", colorYellow, colorReset))
@@ -1342,28 +1476,48 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/model%s       — current model", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+O/P%s       — model menu (install / switch)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/shell%s       — open a terminal session", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/bind%s        — key bindings", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/help%s        — this info", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/exit%s        — exit", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/exit%s        — exit (or Ctrl+Q)", colorYellow, colorReset))
 }
 
 func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("%s=== Key Bindings ===%s", colorBold+colorCyan, colorReset))
 	m.addLine(fmt.Sprintf("  %sF1%s / %s/help%s    — this info", colorYellow, colorReset, colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+P%s          — command palette (all commands and modes)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+Q%s          — exit", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sEsc%s / %sCtrl+C%s — cancel / stop", colorYellow, colorReset, colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+A/E/U/K%s   — start/end/delete-to-start/delete-to-end", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+R/S%s       — history search", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+N%s          — next history", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+P%s          — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sAlt+B/F/D%s      — word back/forward/delete", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+W%s         — delete word back", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+L%s         — clear screen", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+O%s         — model menu (install / switch)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sTab%s            — complete slash command", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s↑/↓%s            — history / scroll", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sShift+Tab%s      — cycle modes (ai → help → terminal)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s↑/↓%s            — previous / next command from history", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sPgUp/PgDn%s      — scroll output", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/1%s %s/2%s %s/3%s — AI / Help / Shell mode", colorYellow, colorReset, colorYellow, colorReset, colorYellow, colorReset))
+}
+
+// showHistory печатает историю из файла, а не из s.recent: recent хранит
+// только последние команды текущей сессии и обрезается до 10 записей, так
+// что после перезапуска /history показывал бы почти пустоту.
+func (m *tuiModel) showHistory() {
+	entries := m.s.historyEntries()
+	if len(entries) == 0 {
+		m.addLine(fmt.Sprintf("%sno history yet%s", colorGray, colorReset))
+		return
+	}
+	m.addLine(fmt.Sprintf("%s=== history (%d) ===%s", colorBold+colorCyan, len(entries), colorReset))
+	for i, e := range entries {
+		ts := e.Timestamp.Format("01-02 15:04")
+		m.addLine(fmt.Sprintf("%s%4d%s  %s%s%s  %s",
+			colorGray, i+1, colorReset,
+			colorGray, ts, colorReset,
+			e.Command))
+	}
 }
 
 func (m *tuiModel) showStats() {
@@ -1374,7 +1528,7 @@ func (m *tuiModel) showStats() {
 	m.addLine(fmt.Sprintf("  %sRequests:%s      %d", colorBold, colorReset, m.s.stats.Requests))
 	m.addLine(fmt.Sprintf("  %sCommands run:%s  %d (LLM: %d, direct: %d)", colorBold, colorReset, total, m.s.stats.CommandsLLM, m.s.stats.CommandsDirect))
 	m.addLine(fmt.Sprintf("  %sErrors fixed:%s  %d", colorBold, colorReset, m.s.stats.ErrorsFix))
-	m.addLine(fmt.Sprintf("  %sCurrent mode:%s  %s\n", colorBold, colorReset, m.rf.cfg.Mode))
+	m.addLine(fmt.Sprintf("  %sCurrent mode:%s  %s\n", colorBold, colorReset, modeLabel(m.rf.cfg.Mode)))
 }
 
 func (m *tuiModel) showModel() {
