@@ -12,6 +12,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/feedback"
+	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
@@ -74,6 +75,10 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		printAuditLimit(out, cfg.AuditFile, 20)
 	case line == "/bind", line == "/bind keys":
 		showKeyBindings(out)
+	case line == "/todo", line == "todo":
+		showTodo(out, s)
+	case strings.HasPrefix(line, "/todo "):
+		handleTodo(strings.TrimSpace(strings.TrimPrefix(line, "/todo ")), out, s)
 	case line == "/stats":
 		showStats(out, s)
 	case line == "/model":
@@ -276,6 +281,44 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	return nil
 }
 
+// showTodo печатает список задач, который ведёт модель через tool todo.
+func showTodo(out io.Writer, s *session) {
+	if s.todos == nil {
+		fmt.Fprintf(out, "%stodo list is not available.%s\n", yellow, reset)
+		return
+	}
+	items := s.todos.Items()
+	if len(items) == 0 {
+		fmt.Fprintf(out, "%stodo list is empty.%s\n", gray, reset)
+		return
+	}
+	fmt.Fprintf(out, "\n%s%s=== todo (%d open) ===%s\n", bold, cyan, s.todos.Open(), reset)
+	for _, it := range items {
+		if it.Done {
+			fmt.Fprintf(out, "  %s[%d] %s %s(done)%s\n", gray, it.ID, it.Task, gray, reset)
+			continue
+		}
+		fmt.Fprintf(out, "  %s[%d]%s %s\n", colorYellow, it.ID, reset, it.Task)
+	}
+	fmt.Fprintln(out)
+}
+
+// handleTodo поддерживает `/todo clear` — всё остальное отдаёт модели.
+func handleTodo(arg string, out io.Writer, s *session) {
+	switch strings.ToLower(arg) {
+	case "":
+		showTodo(out, s)
+	case "clear", "reset", "rm":
+		if s.todos == nil {
+			return
+		}
+		n := s.todos.Clear()
+		fmt.Fprintf(out, "%stodo list cleared (%d item(s))%s\n", gray, n, reset)
+	default:
+		fmt.Fprintf(out, "%susage: /todo | /todo clear%s\n", gray, reset)
+	}
+}
+
 func showStats(out io.Writer, s *session) {
 	elapsed := time.Since(s.stats.StartTime).Round(time.Second)
 	total := s.stats.CommandsLLM + s.stats.CommandsDirect
@@ -289,6 +332,23 @@ func showStats(out io.Writer, s *session) {
 
 func showModel(out io.Writer, s *session) {
 	fmt.Fprintf(out, "\n%s%s=== Model ===%s\n", bold, cyan, reset)
+
+	provider := s.provider
+	if provider == "" {
+		provider = config.ProviderAuto
+	}
+	fmt.Fprintf(out, "  %sProvider:%s  %s\n", bold, reset, provider)
+	if provider == config.ProviderPollinations {
+		model := s.cfg.RemoteModel
+		if model == "" {
+			model = config.DefaultRemoteModel
+		}
+		fmt.Fprintf(out, "  %sIn use:%s  %s\n", bold, reset, model)
+		fmt.Fprintf(out, "  %sEndpoint:%s %s\n", gray, reset, pollinationsEndpoint(s.cfg.RemoteBaseURL))
+		fmt.Fprintf(out, "  %sTools:%s    %s\n", bold, reset, toolsLabel(s.cfg.ToolsEnabled))
+		fmt.Fprintf(out, "  %sAuth:%s     anonymous (no token)\n\n", gray, reset)
+		return
+	}
 	if s.cfg.ModelPath == "" {
 		fmt.Fprintf(out, "  %snone%s\n\n", yellow, reset)
 		return
@@ -297,7 +357,25 @@ func showModel(out io.Writer, s *session) {
 	if fi, err := os.Stat(s.cfg.ModelPath); err == nil {
 		fmt.Fprintf(out, "  %sSize:%s    %d MB\n", bold, reset, fi.Size()/1024/1024)
 	}
+	if provider == config.ProviderAuto {
+		fmt.Fprintf(out, "  %sHint:%s    dmsh config set provider pollinations — без локальной модели\n", gray, reset)
+	}
 	fmt.Fprintln(out)
+}
+
+// pollinationsEndpoint подставляет дефолтный endpoint, если он не задан.
+func pollinationsEndpoint(base string) string {
+	if strings.TrimSpace(base) == "" {
+		return llm.DefaultPollinationsBaseURL
+	}
+	return base
+}
+
+func toolsLabel(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func showHelp(out io.Writer) {
@@ -320,7 +398,8 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/mode help%s or %s/mode 2%s or %s/2%s — Help mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/mode shell%s or %s/mode 3%s or %s/3%s — Shell mode\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "  %s/stats%s     — session statistics\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/model%s     — show the model currently in use\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/todo%s      — show the task list kept by the model\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/model%s     — show the provider and model currently in use\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/retry%s     — re-run last request with alternate approach\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/export%s    — copy last command to clipboard or /export last > file\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/alias%s     — list aliases; /alias name=\"request\" to create; /alias -d name to delete\n", yellow, reset)

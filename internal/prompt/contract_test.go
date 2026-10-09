@@ -1,6 +1,24 @@
 package prompt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestBuildSystemMentionsTools(t *testing.T) {
+	plain := BuildSystem(Context{OS: "windows", UserRequest: "hi"})
+	if strings.Contains(plain, "function") || strings.Contains(plain, "websearch") {
+		t.Fatal("system prompt must not mention tools when none are available")
+	}
+
+	withTools := BuildSystem(Context{OS: "windows", UserRequest: "hi", Tools: []string{"run_command", "todo"}})
+	if !strings.Contains(withTools, "run_command, todo") {
+		t.Fatalf("tool list missing:\n%s", withTools)
+	}
+	if !strings.Contains(withTools, "still return the single JSON object") {
+		t.Fatalf("tool notice must keep the JSON contract:\n%s", withTools)
+	}
+}
 
 func TestParse_PlainObject(t *testing.T) {
 	raw := `{"intent":"run_command","command":"ls -la","explanation":"list files","risk_level":"low","needs_confirmation":false}`

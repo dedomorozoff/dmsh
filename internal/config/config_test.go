@@ -51,3 +51,56 @@ func TestValidate_BadRegex(t *testing.T) {
 		t.Fatal("invalid danger pattern regex should fail validation")
 	}
 }
+
+func TestDefaultProviderIsAutoWithTools(t *testing.T) {
+	cfg := Default()
+	if cfg.Provider != ProviderAuto {
+		t.Fatalf("default provider = %q, want %q", cfg.Provider, ProviderAuto)
+	}
+	if !cfg.ToolsEnabled {
+		t.Fatal("tools should be enabled by default")
+	}
+	if cfg.RemoteModel != DefaultRemoteModel {
+		t.Fatalf("remote model = %q, want %q", cfg.RemoteModel, DefaultRemoteModel)
+	}
+}
+
+func TestValidate_EmptyProviderNormalized(t *testing.T) {
+	cfg := Default()
+	cfg.Provider = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("empty provider should be normalized, got: %v", err)
+	}
+	if cfg.Provider != ProviderAuto {
+		t.Fatalf("provider = %q, want %q", cfg.Provider, ProviderAuto)
+	}
+}
+
+func TestValidate_InvalidProvider(t *testing.T) {
+	cfg := Default()
+	cfg.Provider = "openrouter"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unknown provider should fail validation")
+	}
+}
+
+func TestValidate_BadRemoteBaseURL(t *testing.T) {
+	for _, base := range []string{"ftp://example.com", "not a url", "https://"} {
+		cfg := Default()
+		cfg.RemoteBaseURL = base
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("remote_base_url %q should fail validation", base)
+		}
+	}
+}
+
+func TestValidate_RemoteModelDefaulted(t *testing.T) {
+	cfg := Default()
+	cfg.RemoteModel = "  "
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("blank remote model should be normalized, got: %v", err)
+	}
+	if cfg.RemoteModel != DefaultRemoteModel {
+		t.Fatalf("remote model = %q, want %q", cfg.RemoteModel, DefaultRemoteModel)
+	}
+}

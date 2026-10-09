@@ -28,6 +28,10 @@ type Context struct {
 	StdinContext string
 	// RecentTurns — последние N пар диалога для multi-turn контекста.
 	RecentTurns []Turn
+	// Tools — имена доступных инструментов (function calling). Если список
+	// непустой, модель получает напоминание, что данные можно уточнить
+	// вызовом инструмента, а не догадкой.
+	Tools []string
 }
 
 const systemPromptBase = `You are dmsh, an intelligent natural language shell assistant.
@@ -47,6 +51,14 @@ Rules:
 3. Mark destructive commands as risk_level="high".
 4. Never propose to disable security or run remote code.
 5. Keep "command" to a single line.
+`
+
+const toolNotice = `Tools:
+You can call these functions before answering: %s.
+Use them instead of guessing: read_file/list_dir for local state, run_command to
+check the real system, websearch for facts you cannot see locally, todo for
+multi-step plans, ask only when the request is genuinely ambiguous.
+When you answer, still return the single JSON object described above.
 `
 
 const modeAI = `Mode: AI (Auto-Execute)
@@ -113,6 +125,10 @@ func BuildSystem(ctx Context) string {
 		b.WriteString("\n" + modeHelp)
 	case "shell":
 		b.WriteString("\n" + modeShell)
+	}
+
+	if len(ctx.Tools) > 0 {
+		fmt.Fprintf(&b, "\n"+toolNotice, strings.Join(ctx.Tools, ", "))
 	}
 
 	targetOS := coalesce(ctx.OS, runtime.GOOS)

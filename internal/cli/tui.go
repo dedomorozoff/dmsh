@@ -81,7 +81,7 @@ type tuiModel struct {
 var slashCommands = []string{
 	"/1", "/2", "/3", "/mode",
 	"/help", "/clear", "/exit", "/quit",
-	"/history", "/cd", "/pwd", "/model", "/stats", "/bind", "/alias", "/export", "/retry",
+	"/history", "/cd", "/pwd", "/model", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
@@ -92,6 +92,7 @@ var slashDesc = map[string]string{
 	"/mode":    "show or switch mode",
 	"/help":    "show help for commands and modes",
 	"/model":   "show the current model",
+	"/todo":    "show the model's task list",
 	"/stats":   "session statistics",
 	"/export":  "export the last command",
 	"/alias":   "manage aliases",
@@ -460,17 +461,10 @@ func (m tuiModel) render() string {
 func (m tuiModel) statusline() string {
 	short, _ := os.Getwd()
 	shortName := shortPath(short)
-	modelPath := ""
-	if m.s != nil {
-		modelPath = m.s.cfg.ModelPath
-	}
-	if modelPath == "" {
-		modelPath = m.rf.cfg.ModelPath
-	}
 	left := fmt.Sprintf("%s[%s]%s mode:%s%s%s  model:%s%s",
 		colorCyan, shortName, colorReset,
 		colorYellow, m.modeLabel, colorReset,
-		gray, shortModelName(modelPath))
+		gray, m.modelLabel())
 	right := fmt.Sprintf("%shelp%s %sF1%s",
 		colorGray, colorReset, colorGray, colorReset)
 	ls := displayWidth(left)
@@ -484,6 +478,26 @@ func (m tuiModel) statusline() string {
 		sep = " "
 	}
 	return left + sep + right
+}
+
+// modelLabel показывает удалённую модель, когда активен pollinations, иначе
+// имя локального файла. Пустая строка на старте — это "none".
+func (m tuiModel) modelLabel() string {
+	if m.s != nil && m.s.provider == config.ProviderPollinations {
+		model := m.s.cfg.RemoteModel
+		if model == "" {
+			model = config.DefaultRemoteModel
+		}
+		return "pollinations:" + model
+	}
+	modelPath := ""
+	if m.s != nil {
+		modelPath = m.s.cfg.ModelPath
+	}
+	if modelPath == "" {
+		modelPath = m.rf.cfg.ModelPath
+	}
+	return shortModelName(modelPath)
 }
 
 func shortModelName(p string) string {
@@ -923,6 +937,11 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.showStats()
 	case line == "/model":
 		m.showModel()
+	case line == "/todo", line == "todo":
+		m.showTodo()
+	case strings.HasPrefix(line, "/todo "):
+		handleTodo(strings.TrimSpace(strings.TrimPrefix(line, "/todo ")), io.Discard, m.s)
+		m.showTodo()
 	case line == "/retry":
 		if m.s.lastInput == "" {
 			m.addLine(fmt.Sprintf("%sNo previous request to retry.%s", colorYellow, colorReset))
@@ -1335,15 +1354,71 @@ func (m *tuiModel) showStats() {
 
 func (m *tuiModel) showModel() {
 	m.addLine(fmt.Sprintf("\n%s=== Model ===%s", colorBold+colorCyan, colorReset))
-	if m.rf.cfg.ModelPath == "" {
+
+	provider := m.s.provider
+	if provider == "" {
+		provider = m.rf.cfg.Provider
+	}
+	if provider == "" {
+		provider = config.ProviderAuto
+	}
+	m.addLine(fmt.Sprintf("  %sProvider:%s  %s", colorBold, colorReset, provider))
+
+	if provider == config.ProviderPollinations {
+		m.addLine(fmt.Sprintf("  %sIn use:%s  %s", colorBold, colorReset, firstNonEmpty(m.s.cfg.RemoteModel, config.DefaultRemoteModel)))
+		m.addLine(fmt.Sprintf("%sEndpoint:%s %s", colorGray, colorReset, pollinationsEndpoint(m.s.cfg.RemoteBaseURL)))
+		m.addLine(fmt.Sprintf("  %sSearch:%s   %s", colorBold, colorReset, firstNonEmpty(m.s.cfg.SearchModel, config.DefaultSearchModel)))
+		m.addLine(fmt.Sprintf("  %sTools:%s    %s", colorBold, colorReset, toolsLabel(m.s.cfg.ToolsEnabled)))
+		m.addLine(fmt.Sprintf("%sAuth:%s     anonymous (no token)", colorGray, colorReset))
+		m.addLine("")
+		return
+	}
+
+	modelPath := m.s.cfg.ModelPath
+	if modelPath == "" {
+		modelPath = m.rf.cfg.ModelPath
+	}
+	if modelPath == "" {
 		m.addLine(fmt.Sprintf("  %snone%s\n", colorYellow, colorReset))
 		return
 	}
-	m.addLine(fmt.Sprintf("  %sIn use:%s  %s", colorBold, colorReset, m.rf.cfg.ModelPath))
-	if fi, err := os.Stat(m.rf.cfg.ModelPath); err == nil {
+	m.addLine(fmt.Sprintf("  %sIn use:%s  %s", colorBold, colorReset, modelPath))
+	if fi, err := os.Stat(modelPath); err == nil {
 		m.addLine(fmt.Sprintf("  %sSize:%s    %d MB", colorBold, colorReset, fi.Size()/1024/1024))
 	}
 	m.addLine("")
+}
+
+func (m *tuiModel) showTodo() {
+	if m.s.todos == nil {
+		m.addLine("todo list is not available")
+		return
+	}
+	items := m.s.todos.Items()
+	if len(items) == 0 {
+		m.addLine(fmt.Sprintf("%stodo list is empty.%s", colorGray, colorReset))
+		return
+	}
+	m.addLine(fmt.Sprintf("\n%s=== todo (%d open) ===%s", colorBold+colorCyan, m.s.todos.Open(), colorReset))
+	for _, it := range items {
+		if it.Done {
+			m.addLine(fmt.Sprintf("  %s[%d] %s (done)%s", colorGray, it.ID, it.Task, colorReset))
+			continue
+		}
+		m.addLine(fmt.Sprintf("  %s[%d]%s %s", colorYellow, it.ID, colorReset, it.Task))
+	}
+	m.addLine("")
+}
+
+// firstNonEmpty возвращает первое непустое значение — для настроек,
+// которые могли остаться пустыми в конфиге.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (m *tuiModel) handleExport(line string) {

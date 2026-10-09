@@ -28,6 +28,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 			defer s.close()
 			s.setAutoYes(rf.autoYes)
+			s.printNotice(cmd.ErrOrStderr())
 
 			ctx := cmd.Context()
 			if ctx == nil {

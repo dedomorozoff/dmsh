@@ -29,6 +29,7 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 	}
 	defer s.close()
 	s.setAutoYes(rf.autoYes)
+	s.printNotice(errOut)
 
 	m := NewTuiModel(rf, s)
 	p := tea.NewProgram(m)

@@ -26,6 +26,13 @@ func newConfigCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintln(out, "=== Current Configuration ===")
+			fmt.Fprintf(out, "  %-20s %v\n", "provider:", cfg.Provider)
+			fmt.Fprintf(out, "  %-20s %v\n", "remote_model:", cfg.RemoteModel)
+			fmt.Fprintf(out, "  %-20s %v\n", "search_model:", cfg.SearchModel)
+			if cfg.RemoteBaseURL != "" {
+				fmt.Fprintf(out, "  %-20s %v\n", "remote_base_url:", cfg.RemoteBaseURL)
+			}
+			fmt.Fprintf(out, "  %-20s %v\n", "tools_enabled:", cfg.ToolsEnabled)
 			fmt.Fprintf(out, "  %-20s %v\n", "model_path:", cfg.ModelPath)
 			fmt.Fprintf(out, "  %-20s %v\n", "default_model:", cfg.DefaultModel)
 			fmt.Fprintf(out, "  %-20s %v\n", "threads:", cfg.Threads)
@@ -75,6 +82,24 @@ func newConfigCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 
 			switch key {
+			case "provider":
+				p := config.Provider(strings.ToLower(val))
+				if !p.Valid() {
+					return fmt.Errorf("invalid provider %q, allowed: local, pollinations, auto", val)
+				}
+				cfg.Provider = p
+			case "remotemodel":
+				cfg.RemoteModel = val
+			case "searchmodel":
+				cfg.SearchModel = val
+			case "remotebaseurl":
+				cfg.RemoteBaseURL = val
+			case "tools", "toolsenabled":
+				v, err := strconv.ParseBool(val)
+				if err != nil {
+					return fmt.Errorf("invalid bool value for tools_enabled: %w", err)
+				}
+				cfg.ToolsEnabled = v
 			case "modelpath":
 				cfg.ModelPath = val
 			case "defaultmodel":

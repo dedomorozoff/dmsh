@@ -4,6 +4,10 @@
 A local LLM (GGUF via `llama.cpp`) is embedded directly into the binary
 through CGO — no HTTP server, no external processes, no cloud.
 
+If no local GGUF is available, dmsh can talk to the free
+[Pollinations](https://pollinations.ai) text API instead (anonymous, no
+token). See [Providers](#providers).
+
 > Cross-platform: Linux, macOS, Windows.
 
 ## How it works
@@ -99,6 +103,63 @@ logged to `audit.jsonl` (timestamp, command, source, risk, policy decision,
 exit code) for accountability. Set `resume_session: true` in the config to
 persist the multi-turn dialogue context across restarts.
 
+## Providers
+
+Inference source is chosen by the `provider` setting:
+
+| Provider | Behaviour |
+|----------|-----------|
+| `auto` (default) | local GGUF if one is found, otherwise Pollinations |
+| `local` | local GGUF only; fails with a hint if none is present |
+| `pollinations` | Pollinations API; local models are ignored |
+
+```bash
+dmsh config set provider pollinations     # remote only
+dmsh --provider auto "list big files"     # per-run override
+dmsh --remote-model mistral "..."         # pick another remote model
+dmsh --search-model gemini-search "..."   # model behind the websearch tool
+dmsh --remote-base-url http://host:8080/v1 "..."   # any OpenAI-compatible endpoint
+```
+
+Pollinations is used anonymously: dmsh never sends API tokens and adds no
+`Authorization` header. With `provider=auto` the fallback happens once, at
+session start, and is reported in the output — a local model that fails to
+load is never silently replaced.
+
+`/model` (REPL) shows the active provider, model and endpoint.
+
+## Tools (function calling)
+
+Remote providers can call tools before answering. dmsh offers:
+
+| Tool | What it does |
+|------|--------------|
+| `run_command` | run one shell command and return exit code, stdout and stderr |
+| `read_file` | read a UTF-8 text file (truncated at 8 KB) |
+| `list_dir` | list directory entries with size and mtime |
+| `system_info` | OS, arch, CPU count, shell, cwd |
+| `todo` | keep a checklist of the current task (`add` / `list` / `done` / `clear`) |
+| `ask` | ask the user one focused question and wait for the answer |
+| `websearch` | search the web through the provider's search model |
+
+Notes:
+
+- The loop is bounded (12 steps), and `run_command` goes through exactly the
+  same path as a normal answer: denylist → allowlist → confirmation (unless
+  `--yes`) → audit log. In `--dry-run` mode tools refuse to execute commands
+  and the model is told to return the command in its JSON answer instead.
+- `todo` lives in the session only (up to 50 items). Look at it with `/todo`,
+  drop it with `/todo clear`.
+- `ask` needs a terminal to read from: it works in the REPL and in one-shot
+  mode. In the TUI there is no way to block mid-task, so the model is told to
+  use `intent=ask_clarification` instead. When stdin is piped into dmsh it is
+  already spent on the prompt, so `ask` is not offered at all.
+- `websearch` issues a second request to the same endpoint with a search
+  model (`gemini-search` by default, `--search-model` to change). It is only
+  available for the remote provider.
+
+Disable all tools with `--no-tools` or `dmsh config set tools false`.
+
 ## REPL
 
 Start with `dmsh repl`. The interface is a full-screen Bubble Tea TUI
@@ -161,7 +222,8 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `dmsh history` | command history |
 | `dmsh audit` | audit log of executed commands (add `--json` for raw lines) |
 
-Common flags (all subcommands): `--model`, `--threads`, `--ctx-size`,
+Common flags (all subcommands): `--model`, `--provider`, `--remote-model`,
+`--remote-base-url`, `--no-tools`, `--threads`, `--ctx-size`,
 `--gpu-layers`, `--max-tokens`, `--temperature`, `--top-p`, `--shell`,
 `--dry-run`, `--preview`, `--yes`.
 

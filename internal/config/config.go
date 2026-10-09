@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,13 @@ import (
 	"strings"
 	"sync"
 )
+
+// DefaultRemoteModel — модель Pollinations, если пользователь не выбрал другую.
+const DefaultRemoteModel = "openai"
+
+// DefaultSearchModel — модель с веб-поиском, используемая инструментом
+// websearch.
+const DefaultSearchModel = "gemini-search"
 
 // Mode определяет режим работы dmsh.
 type Mode string
@@ -22,11 +30,42 @@ const (
 	ModeShell Mode = "shell" // Прозрачный проход через оболочку
 )
 
+// Provider определяет, откуда берётся инференс.
+type Provider string
+
+const (
+	// ProviderLocal — только локальный GGUF через llama.cpp. Без модели
+	// запуск падает с понятной ошибкой.
+	ProviderLocal Provider = "local"
+	// ProviderPollinations — удалённый OpenAI-совместимый API Pollinations,
+	// локальные модели игнорируются.
+	ProviderPollinations Provider = "pollinations"
+	// ProviderAuto — локальный GGUF, если он есть, иначе Pollinations.
+	// Решение принимается один раз при старте сессии.
+	ProviderAuto Provider = "auto"
+)
+
+// Valid сообщает, что провайдер известен. Пустое значение невалидно:
+// оно нормализуется в ProviderAuto в Validate.
+func (p Provider) Valid() bool {
+	switch p {
+	case ProviderLocal, ProviderPollinations, ProviderAuto:
+		return true
+	default:
+		return false
+	}
+}
+
 // Config описывает рантайм-настройки dmsh. Поля сознательно плоские,
 // чтобы их легко было пробрасывать из флагов CLI и из JSON-файла.
 type Config struct {
 	ModelPath          string            `json:"model_path"`
 	DefaultModel       string            `json:"default_model"`
+	Provider           Provider          `json:"provider"`
+	RemoteModel        string            `json:"remote_model,omitempty"`
+	RemoteBaseURL      string            `json:"remote_base_url,omitempty"`
+	SearchModel        string            `json:"search_model,omitempty"`
+	ToolsEnabled       bool              `json:"tools_enabled"`
 	Threads            int               `json:"threads"`
 	CtxSize            int               `json:"ctx_size"`
 	GPULayers          int               `json:"gpu_layers"`
@@ -89,17 +128,21 @@ func Default() Config {
 	}
 
 	return Config{
-		Threads:     hw.CPUCores,
-		CtxSize:     4096,
-		GPULayers:   gpuLayers,
-		MaxTokens:   512,
-		Temperature: 0.2,
-		TopP:        0.9,
-		Shell:       defaultShell(),
-		HistoryFile: defaultHistoryFile(),
-		AuditFile:   defaultAuditFile(),
-		DryRun:      false,
-		Mode:        ModeAI,
+		Provider:     ProviderAuto,
+		RemoteModel:  DefaultRemoteModel,
+		SearchModel:  DefaultSearchModel,
+		Threads:      hw.CPUCores,
+		CtxSize:      4096,
+		GPULayers:    gpuLayers,
+		MaxTokens:    512,
+		Temperature:  0.2,
+		TopP:         0.9,
+		Shell:        defaultShell(),
+		HistoryFile:  defaultHistoryFile(),
+		AuditFile:    defaultAuditFile(),
+		DryRun:       false,
+		ToolsEnabled: true,
+		Mode:         ModeAI,
 	}
 }
 
@@ -147,6 +190,35 @@ func (c *Config) Validate() error {
 	case ModeAI, ModeHelp, ModeShell:
 	default:
 		return fmt.Errorf("invalid mode %q (expected ai, help or shell)", c.Mode)
+	}
+
+	switch c.Provider {
+	case "":
+		c.Provider = ProviderAuto
+	case ProviderLocal, ProviderPollinations, ProviderAuto:
+	default:
+		return fmt.Errorf("invalid provider %q (expected local, pollinations or auto)", c.Provider)
+	}
+
+	c.RemoteModel = strings.TrimSpace(c.RemoteModel)
+	if c.RemoteModel == "" {
+		c.RemoteModel = DefaultRemoteModel
+	}
+	c.SearchModel = strings.TrimSpace(c.SearchModel)
+	if c.SearchModel == "" {
+		c.SearchModel = DefaultSearchModel
+	}
+	if raw := strings.TrimSpace(c.RemoteBaseURL); raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("invalid remote_base_url %q: %w", c.RemoteBaseURL, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("remote_base_url must be http(s), got %q", c.RemoteBaseURL)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("remote_base_url %q has no host", c.RemoteBaseURL)
+		}
 	}
 
 	if c.Threads < 0 || c.CtxSize < 0 || c.GPULayers < 0 || c.MaxTokens < 0 {

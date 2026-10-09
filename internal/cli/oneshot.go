@@ -10,6 +10,7 @@ import (
 
 	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	}
 	defer s.close()
 	s.setAutoYes(rf.autoYes)
+	s.printNotice(cmd.ErrOrStderr())
 
 	// Читаем stdin если он не TTY (pipe-режим)
 	stdin := cmd.InOrStdin()
@@ -35,6 +37,10 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 				text = text[:maxStdin] + "\n...[truncated]"
 			}
 			s.stdinCtx = text
+			// stdin уже израсходован на контекст — задать пользователю
+			// вопрос во время работы инструментов больше нечем. Убираем
+			// ask из схем, чтобы модель не тратила шаг впустую.
+			s.tools.Unregister(tools.NameAsk)
 		}
 	}
 

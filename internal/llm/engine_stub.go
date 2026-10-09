@@ -8,8 +8,8 @@ import "context"
 // Полезна для разработки, тестов парсинга и CI без C-тулчейна.
 type stubEngine struct{}
 
-// New возвращает stub-движок. Параметры игнорируются.
-func New(_ Params) (Engine, error) {
+// newLocalEngine возвращает stub-движок. Параметры игнорируются.
+func newLocalEngine(_ Params) (Engine, error) {
 	return &stubEngine{}, nil
 }
 

@@ -17,13 +17,14 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/model"
 	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/tools"
 )
 
 // HistoryEntry — запись в истории команд.
 type HistoryEntry struct {
 	Timestamp time.Time `json:"timestamp"`
 	Command   string    `json:"command"`
-	Source    string    `json:"source"` // "llm" or "direct"
+	Source    string    `json:"source"` // "llm", "tool" or "direct"
 }
 
 // AuditEntry — строка аудит-лога: что реально выполнялось и какое решение
@@ -31,7 +32,7 @@ type HistoryEntry struct {
 type AuditEntry struct {
 	Timestamp time.Time   `json:"timestamp"`
 	Command   string      `json:"command"`
-	Source    string      `json:"source"` // "llm" or "direct"
+	Source    string      `json:"source"` // "llm", "tool" or "direct"
 	Risk      prompt.Risk `json:"risk"`
 	Allowed   bool        `json:"allowed"`
 	Reason    string      `json:"reason,omitempty"`
@@ -51,11 +52,18 @@ type SessionStats struct {
 // session инкапсулирует движок и собранный для него контекст промпта.
 // Один session живёт всё время REPL или одной CLI-команды.
 type session struct {
-	cfg          config.Config
-	engine       llm.Engine
+	cfg      config.Config
+	provider config.Provider
+	notice   string
+	engine   llm.Engine
+	tools    *tools.Registry
+	todos    *tools.TodoStore
+	// searchEngine обслуживает инструмент websearch. Он создаётся лениво и
+	// использует отдельную search-модель того же провайдера.
+	searchEngine llm.Engine
 	recent       []string
 	hist         []HistoryEntry
-	savedHist    int           // индекс первой незаписанной записи в hist
+	savedHist    int // индекс первой незаписанной записи в hist
 	input        LineReader
 	stats        SessionStats
 	lastInput    string        // последний запрос пользователя (для /retry)
@@ -65,29 +73,112 @@ type session struct {
 	autoYes      bool          // --yes: пропускать все подтверждения
 }
 
+// newToolRegistry собирает набор инструментов для текущей сессии.
+// Команда оболочки попадает в схемы, но исполняется отдельно — с проверкой
+// политики безопасности, поэтому её обработчик в реестре — заглушка.
+func newToolRegistry(shell string) *tools.Registry {
+	r := tools.NewRegistry()
+	r.Register(tools.RunCommandSpec(shell), func(context.Context, string) (string, error) {
+		return "", errors.New("run_command must go through the dmsh security policy")
+	})
+	return r
+}
+
 func newSession(cfg config.Config) (*session, error) {
-	modelPath, err := resolveModelPath(cfg)
+	provider, notice, err := resolveProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
-	cfg.ModelPath = modelPath
+	cfg.Provider = provider
 
-	eng, err := llm.New(llm.Params{
-		ModelPath: cfg.ModelPath,
-		Threads:   cfg.Threads,
-		CtxSize:   cfg.CtxSize,
-		GPULayers: cfg.GPULayers,
-	})
+	s := &session{
+		cfg:      cfg,
+		provider: provider,
+		notice:   notice,
+		tools:    newToolRegistry(cfg.Shell),
+		todos:    tools.NewTodoStore(),
+		stats:    SessionStats{StartTime: time.Now()},
+	}
+
+	s.registerOptionalTools()
+
+	if provider == config.ProviderLocal {
+		modelPath, err := resolveModelPath(cfg)
+		if err != nil {
+			return nil, err
+		}
+		s.cfg.ModelPath = modelPath
+	} else {
+		s.cfg.ModelPath = ""
+	}
+
+	eng, err := s.newEngine()
 	if err != nil {
 		return nil, fmt.Errorf("load model: %w", err)
 	}
-	s := &session{
-		cfg:    cfg,
-		engine: eng,
-		stats:  SessionStats{StartTime: time.Now()},
-	}
+	s.engine = eng
 	s.loadTurns()
 	return s, nil
+}
+
+// newEngine создаёт движок для текущего провайдера и конфигурации.
+func (s *session) newEngine() (llm.Engine, error) {
+	return llm.New(llm.Params{
+		Provider:      toLLMProvider(s.provider),
+		ModelPath:     s.cfg.ModelPath,
+		Threads:       s.cfg.Threads,
+		CtxSize:       s.cfg.CtxSize,
+		GPULayers:     s.cfg.GPULayers,
+		RemoteModel:   s.cfg.RemoteModel,
+		RemoteBaseURL: s.cfg.RemoteBaseURL,
+	})
+}
+
+// toLLMProvider переводит провайдера конфига в тип движка.
+func toLLMProvider(p config.Provider) llm.Provider {
+	switch p {
+	case config.ProviderPollinations:
+		return llm.ProviderPollinations
+	case config.ProviderLocal:
+		return llm.ProviderLocal
+	default:
+		return llm.ProviderAuto
+	}
+}
+
+// resolveProvider выбирает провайдера инференса. Для ProviderAuto локальный
+// GGUF используется только если файл действительно найден, иначе
+// включается Pollinations и возвращается notice для показа пользователю.
+// Скрытого отката при ошибке локального инференса нет: выбор делается
+// один раз, здесь.
+func resolveProvider(cfg config.Config) (config.Provider, string, error) {
+	switch cfg.Provider {
+	case config.ProviderPollinations:
+		return config.ProviderPollinations, "", nil
+	case config.ProviderLocal:
+		if _, err := resolveModelPath(cfg); err != nil {
+			return "", "", fmt.Errorf("provider=local, but no GGUF model found: %w\n"+
+				"  download one:   dmsh model download\n"+
+				"  or go remote:   dmsh config set provider auto", err)
+		}
+		return config.ProviderLocal, "", nil
+	case "", config.ProviderAuto:
+		if _, err := resolveModelPath(cfg); err == nil {
+			return config.ProviderLocal, "", nil
+		}
+		return config.ProviderPollinations,
+			"no local GGUF model found — using Pollinations (provider=auto)", nil
+	default:
+		return "", "", fmt.Errorf("unknown provider %q", cfg.Provider)
+	}
+}
+
+// printNotice показывает предупреждение о выбранном провайдере, если оно есть.
+func (s *session) printNotice(out io.Writer) {
+	if s.notice == "" {
+		return
+	}
+	fmt.Fprintf(out, "%s[dmsh]%s %s%s%s\n", yellow, reset, yellow, s.notice, reset)
 }
 
 func resolveModelPath(cfg config.Config) (string, error) {
@@ -126,18 +217,24 @@ func (s *session) close() {
 	if s.engine != nil {
 		_ = s.engine.Close()
 	}
+	if s.searchEngine != nil {
+		_ = s.searchEngine.Close()
+		s.searchEngine = nil
+	}
 	// Save history
 	_ = s.saveHistory()
 	s.saveTurns()
 }
 
 // switchModel заменяет загруженную модель на лету. При ошибке загрузки
-// старая модель остаётся на месте и продолжает работать.
+// старая модель остаётся на месте и продолжает работать. Переключение на
+// локальную модель всегда переводит сессию на провайдер local.
 func (s *session) switchModel(path string) error {
 	if s.engine == nil {
 		return errors.New("no engine loaded")
 	}
 	eng, err := llm.New(llm.Params{
+		Provider:  llm.ProviderLocal,
 		ModelPath: path,
 		Threads:   s.cfg.Threads,
 		CtxSize:   s.cfg.CtxSize,
@@ -151,6 +248,9 @@ func (s *session) switchModel(path string) error {
 	old := s.engine
 	s.engine = eng
 	s.cfg.ModelPath = path
+	s.provider = config.ProviderLocal
+	s.cfg.Provider = config.ProviderLocal
+	s.notice = ""
 	_ = old.Close()
 	return nil
 }
@@ -224,7 +324,6 @@ func trimHistoryFile(path string, maxLines int) error {
 	}
 	return os.Rename(tmp, path)
 }
-
 
 // addHistory добавляет команду в историю сессии.
 func (s *session) addHistory(cmd, source string) {
@@ -362,6 +461,7 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 		Mode:         string(s.cfg.Mode),
 		StdinContext: s.stdinCtx,
 		RecentTurns:  s.turns,
+		Tools:        s.promptToolNames(),
 	}
 	system := prompt.BuildSystem(pctx)
 	user := prompt.BuildUser(pctx)
@@ -373,6 +473,28 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 		StopTokens:  []string{"<|im_end|>", "</s>"},
 	}
 
+	pr := newStreamPrinter(out)
+	fmt.Fprintf(out, "%s[dmsh]%s ", cyan, reset)
+
+	var err error
+	if tc, ok := s.toolEngine(); ok {
+		err = s.chatWithTools(ctx, tc, system, user, opts, pr, out)
+	} else {
+		err = s.streamPlain(ctx, system, user, opts, pr)
+	}
+
+	fmt.Fprintln(out)
+
+	if err != nil {
+		return prompt.Response{}, pr.String(), err
+	}
+
+	return s.finishAnswer(ctx, system, user, opts, pr, out, userInput)
+}
+
+// streamPlain — обычный запрос без инструментов: токены печатаются
+// по мере генерации.
+func (s *session) streamPlain(ctx context.Context, system, user string, opts llm.SamplingOptions, pr *streamPrinter) error {
 	tokens := make(chan string, 128)
 	errCh := make(chan error, 1)
 
@@ -380,57 +502,16 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 		errCh <- s.engine.Stream(ctx, system, user, opts, tokens)
 	}()
 
-	fmt.Fprintf(out, "%s[dmsh]%s ", cyan, reset)
-
-	var raw strings.Builder
-	printedCounts := make(map[string]int)
-	headersPrinted := make(map[string]bool)
-	// Question is deliberately not printed here: a clarification is shown by
-	// the interactive question flow (TUI / REPL), printing it again would
-	// duplicate the text.
-	keys := []string{"command", "explanation"}
-
 	for tok := range tokens {
-		raw.WriteString(tok)
-		buf := raw.String()
-
-		for _, k := range keys {
-			val, _, _ := getJSONValue(buf, k)
-			if val == "" {
-				continue
-			}
-
-			cleanVal := unescapeJSONString(val)
-			alreadyPrinted := printedCounts[k]
-			if len(cleanVal) > alreadyPrinted {
-				newText := cleanVal[alreadyPrinted:]
-				if !headersPrinted[k] {
-					headersPrinted[k] = true
-					switch k {
-					case "command":
-						fmt.Fprint(out, "\n\033[36mCommand:\033[0m ")
-					case "explanation":
-						fmt.Fprint(out, "\n\033[32mExplanation:\033[0m ")
-					case "question":
-						fmt.Fprint(out, "\n\033[33mQuestion:\033[0m ")
-					}
-				}
-				fmt.Fprint(out, newText)
-				if f, ok := out.(*os.File); ok {
-					_ = f.Sync()
-				}
-				printedCounts[k] = len(cleanVal)
-			}
-		}
+		pr.feed(tok)
 	}
+	return <-errCh
+}
 
-	fmt.Fprintln(out)
-
-	if err := <-errCh; err != nil {
-		return prompt.Response{}, raw.String(), err
-	}
-
-	rawStr := raw.String()
+// finishAnswer разбирает накопленный JSON-ответ и, если модель его сломала,
+// просит починить (как и раньше).
+func (s *session) finishAnswer(ctx context.Context, system, user string, opts llm.SamplingOptions, pr *streamPrinter, out io.Writer, userInput string) (prompt.Response, string, error) {
+	rawStr := pr.String()
 	resp, perr := prompt.Parse(rawStr)
 	if perr == nil {
 		// Сохраняем пару диалога для multi-turn контекста
@@ -456,7 +537,7 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	// Поля первого ответа уже были отрисованы при стриминге, поэтому не
 	// дублируем их. Если ремонт вернул контент там, где стрим был пуст,
 	// печатаем только его.
-	if printedCounts["command"] == 0 && printedCounts["explanation"] == 0 {
+	if pr.empty() {
 		if resp2.Command != "" {
 			fmt.Fprintf(out, "\n\033[36mCommand:\033[0m %s\n", resp2.Command)
 		}
@@ -468,6 +549,69 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	}
 
 	return resp2, raw2, nil
+}
+
+// streamPrinter копит поток ответа модели и печатает значения полей JSON
+// по мере их появления, не дожидаясь закрывающей скобки.
+type streamPrinter struct {
+	out     io.Writer
+	raw     strings.Builder
+	printed map[string]int
+	headers map[string]bool
+	keys    []string
+}
+
+func newStreamPrinter(out io.Writer) *streamPrinter {
+	return &streamPrinter{
+		out:     out,
+		printed: make(map[string]int, 2),
+		headers: make(map[string]bool, 2),
+		// Question is deliberately not printed here: a clarification is
+		// shown by the interactive question flow (TUI / REPL), printing it
+		// again would duplicate the text.
+		keys: []string{"command", "explanation"},
+	}
+}
+
+func (p *streamPrinter) feed(tok string) {
+	p.raw.WriteString(tok)
+	buf := p.raw.String()
+
+	for _, k := range p.keys {
+		val, _, _ := getJSONValue(buf, k)
+		if val == "" {
+			continue
+		}
+		cleanVal := unescapeJSONString(val)
+		already := p.printed[k]
+		if len(cleanVal) <= already {
+			continue
+		}
+		if !p.headers[k] {
+			p.headers[k] = true
+			switch k {
+			case "command":
+				fmt.Fprint(p.out, "\n\033[36mCommand:\033[0m ")
+			case "explanation":
+				fmt.Fprint(p.out, "\n\033[32mExplanation:\033[0m ")
+			case "question":
+				fmt.Fprint(p.out, "\n\033[33mQuestion:\033[0m ")
+			}
+		}
+		fmt.Fprint(p.out, cleanVal[already:])
+		if f, ok := p.out.(*os.File); ok {
+			_ = f.Sync()
+		}
+		p.printed[k] = len(cleanVal)
+	}
+}
+
+func (p *streamPrinter) String() string { return p.raw.String() }
+
+// empty сообщает, что ни одно поле не было напечатано — по этому признаку
+// решается, печатать ли отремонтированный ответ целиком.
+func (p *streamPrinter) empty() bool {
+	return p.printed["command"] == 0 && p.printed["explanation"] == 0
 }
 
 func getJSONValue(buf, key string) (value string, hasClosed bool, startIdx int) {

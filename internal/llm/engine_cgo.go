@@ -50,8 +50,8 @@ type cgoEngine struct {
 	closed bool
 }
 
-// New загружает модель и создаёт контекст. Один Engine на процесс.
-func New(p Params) (Engine, error) {
+// newLocalEngine загружает модель и создаёт контекст. Один Engine на процесс.
+func newLocalEngine(p Params) (Engine, error) {
 	if p.ModelPath == "" {
 		return nil, errors.New("llm: empty model path")
 	}
