@@ -448,10 +448,23 @@ jobs:
           cp release/dmsh-packages/* dist/ 2>/dev/null || true
           ls -la dist/
 
+      # Curated notes live next to the code: doc/releases/<tag>.md. Without a
+      # matching file the release falls back to GitHub's generated notes.
+      - name: Collect release notes
+        run: |
+          notes="doc/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            cp "$notes" release-notes.md
+          else
+            echo "No curated notes for ${GITHUB_REF_NAME}; falling back to generated notes." > release-notes.md
+          fi
+          cat release-notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: release-notes.md
           draft: true
           generate_release_notes: true
         env:
