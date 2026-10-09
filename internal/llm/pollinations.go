@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,9 +131,30 @@ func (e *pollinationsEngine) do(ctx context.Context, body chatBody) (*http.Respo
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
 		}
+		if hint := remoteErrorHint(resp.StatusCode); hint != "" {
+			return nil, fmt.Errorf("llm: pollinations HTTP %d: %w (%s)", resp.StatusCode, errRemote, hint)
+		}
 		return nil, fmt.Errorf("llm: pollinations HTTP %d: %s", resp.StatusCode, msg)
 	}
 	return resp, nil
+}
+
+// errRemote помечает сетевую ошибку провайдера, чтобы вызывающая сторона
+// могла отличить её от ошибок разбора ответа.
+var errRemote = errors.New("remote provider request failed")
+
+// remoteErrorHint переводит частые ответы Pollinations в actionable текст:
+// анонимный доступ допускает один запрос за раз, поэтому чаще всего
+// 429 означает «слишком быстро», а не «сломанный запрос».
+func remoteErrorHint(code int) string {
+	switch code {
+	case http.StatusTooManyRequests:
+		return "anonymous access allows one request at a time — wait ~15s and retry, or use --remote-base-url with your own endpoint"
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
+		return "the model requires a token; dmsh does not send tokens — use --remote-base-url with your own endpoint or pick a free model with --remote-model"
+	default:
+		return ""
+	}
 }
 
 func (e *pollinationsEngine) singleTurnBody(systemPrompt, userPrompt string, opts SamplingOptions) chatBody {

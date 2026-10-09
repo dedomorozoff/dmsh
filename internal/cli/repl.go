@@ -118,6 +118,7 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 }
 
 func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, errW io.Writer) (prompt.Response, error) {
+	var clarify clarification
 	for {
 		resp, raw, err := s.askStream(ctx, mode, input, out)
 		if err != nil {
@@ -128,6 +129,13 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 			return resp, err
 		}
 		if resp.Intent != prompt.IntentAskClarification || strings.TrimSpace(resp.Question) == "" {
+			return resp, nil
+		}
+
+		// Модель переспрашивает, а уточнений уже было достаточно: не
+		// мучаем пользователя, показываем, чего от него ждали.
+		if clarify.exhausted() || clarify.repeatsLast(resp.Question) {
+			fmt.Fprintf(out, "%s(stopped: the model kept asking instead of answering — rephrase the request)%s\n", gray, reset)
 			return resp, nil
 		}
 
@@ -154,8 +162,35 @@ func askWithFollowUp(ctx context.Context, s *session, mode, input string, out, e
 			return resp, ErrSlashCommand
 		}
 
-		input = input + "\n" + answer
+		answer = strings.TrimSpace(stripListMarker(answer))
+		input = clarify.followUp(input, resp.Question, answer)
 	}
+}
+
+// stripListMarker убирает нумерацию, которую терминалы и редакторы любят
+// добавлять к ответам на вопросы: "1. project-name" должно уйти в модели
+// как есть. После маркера обязателен пробел, иначе пострадали бы версии
+// вида "3.5" и "1.2.3".
+func stripListMarker(answer string) string {
+	answer = strings.TrimSpace(answer)
+	i := 0
+	for i < len(answer) && answer[i] >= '0' && answer[i] <= '9' {
+		i++
+	}
+	if i == 0 || i+1 >= len(answer) {
+		return answer
+	}
+	if answer[i] != '.' && answer[i] != ')' {
+		return answer
+	}
+	if answer[i+1] != ' ' && answer[i+1] != '\t' {
+		return answer
+	}
+	rest := strings.TrimSpace(answer[i+1:])
+	if rest == "" {
+		return answer
+	}
+	return rest
 }
 
 func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, resp prompt.Response, out, errW io.Writer) error {

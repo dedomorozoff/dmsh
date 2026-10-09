@@ -299,6 +299,38 @@ func TestPollinationsAPIErrorBody(t *testing.T) {
 	}
 }
 
+func TestPollinationsRateLimitHint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	eng, _ := NewPollinations(Params{RemoteBaseURL: srv.URL})
+	_, err := eng.Generate(context.Background(), "", "hi", SamplingOptions{})
+	if err == nil {
+		t.Fatal("429 must be an error")
+	}
+	if !strings.Contains(err.Error(), "one request at a time") {
+		t.Fatalf("error should explain the anonymous limit: %v", err)
+	}
+}
+
+func TestPollinationsTokenHint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+
+	eng, _ := NewPollinations(Params{RemoteBaseURL: srv.URL})
+	_, err := eng.Generate(context.Background(), "", "hi", SamplingOptions{})
+	if err == nil {
+		t.Fatal("402 must be an error")
+	}
+	if !strings.Contains(err.Error(), "--remote-base-url") {
+		t.Fatalf("error should point to an alternative: %v", err)
+	}
+}
+
 func TestToolCallDecodeArgsEmpty(t *testing.T) {
 	var args RunCommandArgsForTest
 	if err := (ToolCall{Name: "run_command"}).DecodeArgs(&args); err != nil {

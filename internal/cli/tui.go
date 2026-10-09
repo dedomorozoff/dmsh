@@ -56,6 +56,9 @@ type tuiModel struct {
 	confirmText string
 	confirmOK   func(bool)
 	pendingResp prompt.Response
+	// clarify ведёт диалог уточнений текущего запроса: модель не должна
+	// спрашивать одно и то же и не должна спрашивать бесконечно.
+	clarify clarification
 
 	searchQuery string
 	searchIdx   int
@@ -209,7 +212,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.resp.Command != "" {
 				return m.executeResponse(msg.resp)
 			}
-			if strings.TrimSpace(msg.resp.Question) != "" {
+			question := strings.TrimSpace(msg.resp.Question)
+			if question != "" {
+				// Модель повторило вопрос или исчерпало круги: останавливаемся,
+				// чтобы пользователь не отвечал на одно и то же по кругу.
+				if m.clarify.exhausted() || m.clarify.repeatsLast(question) {
+					m.addLine(fmt.Sprintf("%s(stopped: the model kept asking instead of answering — rephrase the request)%s", colorGray, colorReset))
+					return m, nil
+				}
+				m.addLine(fmt.Sprintf("%s[dmsh] %s%s", colorCyan, msg.resp.Question, colorReset))
 				m.state = tuiQuestion
 				m.pendingResp = msg.resp
 				m.input = ""
@@ -349,10 +360,6 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 	switch m.state {
 	case tuiConfirming:
 		fmt.Fprintf(&body, "%sExecute? [y/N]: %s%s\n", colorYellow, m.confirmText, colorReset)
-	case tuiQuestion:
-		if m.pendingResp.Question != "" {
-			fmt.Fprintf(&body, "%s[dmsh] %s%s\n", colorCyan, m.pendingResp.Question, colorReset)
-		}
 	case tuiSearch:
 		body.WriteString(m.searchPrompt() + colorGreen + m.input + "\n")
 	}
@@ -900,6 +907,8 @@ func (m tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 		m.executeDirect(line)
 		return m, nil
 	}
+	// Новый запрос пользователя — новый диалог уточнений.
+	m.clarify = clarification{}
 	return m.submitToLLM(line)
 }
 
@@ -947,6 +956,7 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			m.addLine(fmt.Sprintf("%sNo previous request to retry.%s", colorYellow, colorReset))
 			return m, nil
 		}
+		m.clarify = clarification{}
 		return m.submitToLLM("Alternative approach needed. Previous attempt failed. " + m.s.lastInput)
 	case strings.HasPrefix(line, "/export"):
 		m.handleExport(line)
@@ -971,10 +981,17 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) submitToLLM(input string) (tea.Model, tea.Cmd) {
+	return m.submitToLLMEcho(input, input)
+}
+
+// submitToLLMEcho отправляет модели send, но в транскрипт печатает echo.
+// Для уточнений это разные строки: модели уходит вопрос с ответом, а
+// пользователю — только его ответ.
+func (m tuiModel) submitToLLMEcho(send, echo string) (tea.Model, tea.Cmd) {
 	// Echo the request into the transcript so it does not vanish when the
 	// input line is cleared on enter.
-	m.addLine(fmt.Sprintf("%s> %s%s", colorGray, input, colorReset))
-	mm, cmd := m.startLLMStream("run", input)
+	m.addLine(fmt.Sprintf("%s> %s%s", colorGray, echo, colorReset))
+	mm, cmd := m.startLLMStream("run", send)
 	return mm, cmd
 }
 
@@ -1080,6 +1097,8 @@ func (m tuiModel) autoCorrect(resp prompt.Response, res executor.Result) (tuiMod
 	m.addLine(fmt.Sprintf("%s%s%s", gray, strings.Repeat("─", 40), colorReset))
 	m.s.stats.ErrorsFix++
 	correctionInput := fmt.Sprintf("Command '%s' failed.\nExit code: %d\nStderr:\n%s\n\nPlease fix the command so it runs successfully on the current OS.", resp.Command, res.ExitCode, stderr)
+	// Автокоррекция — тоже новый запрос, уточнения сбрасываются.
+	m.clarify = clarification{}
 	return m.startLLMStream("run", correctionInput)
 }
 
@@ -1115,15 +1134,21 @@ func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) handleQuestionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEnter {
-		answer := strings.TrimSpace(m.input)
+		answer := strings.TrimSpace(stripListMarker(m.input))
 		m.input = ""
 		m.cursorPos = 0
 		if answer == "" {
 			return m, nil
 		}
+		question := m.pendingResp.Question
+		if m.clarify.exhausted() || m.clarify.repeatsLast(question) {
+			m.state = tuiIdle
+			m.addLine(fmt.Sprintf("%s(stopped: the model kept asking — rephrase the request)%s", colorGray, colorReset))
+			return m, nil
+		}
+		followUp := m.clarify.followUp(m.s.lastInput, question, answer)
 		m.state = tuiStreaming
-		newInput := m.s.lastInput + "\n" + answer
-		return m.submitToLLM(newInput)
+		return m.submitToLLMEcho(followUp, answer)
 	}
 	if msg.String() == "ctrl+c" || msg.Code == tea.KeyEsc {
 		m.state = tuiIdle
