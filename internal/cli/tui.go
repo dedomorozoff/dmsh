@@ -14,6 +14,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/feedback"
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
@@ -28,7 +29,11 @@ const (
 	tuiSearch
 	tuiModelMenu
 	tuiPalette
-	tuiRunning // команда выполняется: ввод свободен, виден спиннер
+	tuiSettings
+	tuiSetup
+	tuiModeMenu
+	tuiTerminal // терминал в окне приложения: экран занимает весь кадр
+	tuiRunning  // команда выполняется: ввод свободен, виден спиннер
 )
 
 type tuiModel struct {
@@ -83,6 +88,44 @@ type tuiModel struct {
 	modelCancel   context.CancelFunc
 	modelCh       chan modelProgMsg
 	modelDoneCh   chan modelDoneMsg
+	// modelFilter — подстрока поиска по списку моделей.
+	modelFilter string
+
+	// settings screen (Ctrl+P → settings): правки прокси и endpoint'а.
+	// Применяются только по Enter на строке save.
+	setIdx       int
+	setMode      netproxy.Mode
+	setProto     string
+	setHost      string
+	setPort      string
+	setLogin     string
+	setPass      string
+	setNoProxy   string
+	setEndpoint  string
+	setEditing   bool
+	setBusy      bool
+	setStatus    string
+	setStatusErr bool
+	setCancel    context.CancelFunc
+
+	// setup screen (Ctrl+P → setup): выбор способа подключения к LLM.
+	// Применяется по Enter на строке apply.
+	supIdx      int
+	supProvider config.Provider
+	supRemote   string
+	supLocal    string
+	supEndpoint string
+	// supKey — ключ, который будет записан в конфиг. Значение из переменной
+	// окружения сюда не попадает: переносить секрет в файл без явного
+	// желания нельзя.
+	supKey       string
+	supEditing   bool
+	supStatus    string
+	supStatusErr bool
+
+	// term — встроенный терминал режима shell. Не nil, только пока
+	// псевдотерминал жив: экран терминала рисуется вместо транскрипта.
+	term *terminalPane
 
 	scrollOffset int
 
@@ -93,38 +136,42 @@ type tuiModel struct {
 	// running — фоновая команда (composer, тесты, сборка): пока она идёт,
 	// ввод свободен, а состояние держит спиннер. cmdSeq нумерует запуски,
 	// чтобы устаревший результат не затёр новый.
-	running       bool
-	cmdSeq        int
-	cmdCancel     context.CancelFunc
-	cmdCommand    string
-	cmdStartedAt  time.Time
+	running      bool
+	cmdSeq       int
+	cmdCancel    context.CancelFunc
+	cmdCommand   string
+	cmdStartedAt time.Time
 }
 
 // slashCommands — commands offered by Tab completion and the "/" menu.
 // Mode switches come first so they are visible in the truncated menu.
 var slashCommands = []string{
 	"/mode", "/shell", "/help", "/clear", "/exit", "/quit",
-	"/history", "/cd", "/pwd", "/model", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
+	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
 var slashDesc = map[string]string{
-	"/mode":    "show or switch mode",
-	"/shell":   "open a real terminal session",
-	"/help":    "show help for commands and modes",
-	"/model":   "show the current model",
-	"/todo":    "show the model's task list",
-	"/stats":   "session statistics",
-	"/export":  "export the last command",
-	"/alias":   "manage aliases",
-	"/history": "recent commands",
-	"/cd":      "change directory",
-	"/pwd":     "current directory",
-	"/clear":   "clear screen",
-	"/bind":    "show key bindings",
-	"/retry":   "retry the last request",
-	"/exit":    "exit",
-	"/quit":    "exit",
+	"/mode":     "show the modes and pick one",
+	"/shell":    "open a shell inside this window",
+	"/help":     "show help for commands and modes",
+	"/model":    "show the current model",
+	"/models":   "model menu: pick, install or switch a model",
+	"/setup":    "choose how dmsh connects to the LLM",
+	"/settings": "network settings: proxy, endpoint, connection test",
+	"/proxy":    "shortcut for /settings",
+	"/todo":     "show the model's task list",
+	"/stats":    "session statistics",
+	"/export":   "export the last command",
+	"/alias":    "manage aliases",
+	"/history":  "recent commands",
+	"/cd":       "change directory",
+	"/pwd":      "current directory",
+	"/clear":    "clear screen",
+	"/bind":     "show key bindings",
+	"/retry":    "retry the last request",
+	"/exit":     "exit",
+	"/quit":     "exit",
 }
 
 // slashMatches возвращает команды, начинающиеся с prefix (точное совпадение
@@ -243,6 +290,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.resizeTerminal()
 		return m, nil
 	case tea.PasteMsg:
 		if m.state == tuiIdle || m.state == tuiQuestion {
@@ -310,11 +358,27 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForModel(m.modelCh, m.modelDoneCh)
 		}
 		return m, nil
-	case shellExitedMsg:
-		m.resumeFromShell(msg)
+	case proxyTestMsg:
+		// Результат проверки приходит в любой момент: если пользователь
+		// уже закрыл экран, сообщение просто игнорируем.
+		if m.state == tuiSettings {
+			m.finishProxyTest(msg)
+		} else if m.setCancel != nil {
+			m.setCancel()
+			m.setCancel = nil
+		}
 		return m, nil
-	case terminalRanMsg:
-		m.printTerminalRun(msg)
+	case terminalOutputMsg:
+		// Вывод приходит кусками и рисуется только пока терминал открыт:
+		// закрытую панель незачем кормить.
+		if m.term == nil {
+			return m, nil
+		}
+		_, _ = m.term.screen.Write(msg.data)
+		return m, waitTerminal(m.term)
+	case terminalExitMsg:
+		return m.finishTerminal(msg), nil
+	case terminalClosedMsg:
 		return m, nil
 	case cmdDoneMsg:
 		return m.finishBackgroundCommand(msg)
@@ -328,6 +392,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelCancel()
 			m.modelCancel = nil
 		}
+		// Загрузка закончена: в каналы больше никто не пишет, и следующее
+		// открытие меню не должно ждать их сообщений впустую.
+		m.modelCh = nil
+		m.modelDoneCh = nil
 		if msg.err != nil {
 			if msg.err == context.Canceled {
 				m.addLine("(cancelled)")
@@ -350,14 +418,48 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.addLine(fmt.Sprintf("(%smodel%s: %s)", colorCyan, colorReset, name))
 		return m, nil
+	case remoteModelsMsg:
+		// Каталог приходит после закрытия окна: сообщение просто игнорируем.
+		if m.state != tuiModelMenu {
+			return m, nil
+		}
+		m.applyRemoteModelsMsg(msg)
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m tuiModel) View() tea.View {
+	return m.renderView()
+}
+
+// renderView собирает кадр вместе с позицией курсора. Модальные окна
+// позиционируются по собственным координатам внутри рамки, поэтому для них
+// раскладку строки ввода считать не нужно.
+func (m tuiModel) renderView() tea.View {
 	var v tea.View
 	v.AltScreen = true
 	v.SetContent(m.render())
+
+	// Терминал рисует курсор сам: он принадлежит оболочке, а не строке
+	// ввода dmsh. Поверх открытого окна курсор остаётся в окне — иначе
+	// правка в палитре шла бы не туда.
+	box, hasModal := m.modal()
+	if !hasModal {
+		if pos, ok := m.terminalCursor(); ok {
+			v.Cursor = &tea.Cursor{Position: pos, Shape: tea.CursorBlock}
+			return v
+		}
+	}
+
+	if hasModal && m.height > 0 && m.width > 0 {
+		_, col, y := overlayModal(m.renderFrame(), box, m.width, m.height)
+		if m.height > 1 && y > m.height-2 {
+			y = m.height - 2
+		}
+		v.Cursor = &tea.Cursor{Position: tea.Position{X: col, Y: y}, Shape: tea.CursorBlock, Blink: true}
+		return v
+	}
 
 	col := displayWidth(m.buildPrompt())
 	switch m.state {
@@ -368,11 +470,7 @@ func (m tuiModel) View() tea.View {
 	case tuiModelMenu:
 		col = 0
 	default:
-		// Палитра рисует запрос без приглашения, поэтому не берём
-		// buildPrompt() за основу.
-		if m.state != tuiPalette {
-			col = displayWidth(m.buildPrompt())
-		}
+		col = displayWidth(m.buildPrompt())
 		for _, r := range []rune(m.input)[:min(m.cursorPos, runeSliceLen(m.input))] {
 			col += displayWidth(string(r))
 		}
@@ -434,6 +532,10 @@ func fitWidth(s string, width int) string {
 // the terminal soft-wraps long lines, so the frame no longer matches the
 // screen rows: the status line breaks apart and the render falls into garbage.
 func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
+	// Терминал занимает весь кадр: ни транскрипта, ни строки ввода.
+	if m.state == tuiTerminal {
+		return m.terminalRows(), nil
+	}
 	var body strings.Builder
 	if m.content != "" {
 		body.WriteString(m.content)
@@ -459,9 +561,6 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 	switch m.state {
 	case tuiModelMenu:
 		inRows = m.menuRows()
-	case tuiPalette:
-		// Палитра заменяет строку ввода: запрос уже отфильтрован.
-		inRows = m.paletteRows()
 	case tuiConfirming, tuiSearch:
 		// Обе строки живут в скроллбеке, отдельной строки ввода нет.
 	default:
@@ -476,24 +575,46 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 		// Slash-command menu with descriptions while typing "/".
 		const maxVisible = 8
 		menu := m.menuList()
-		for i, cmd := range menu {
-			if i >= maxVisible {
-				if rest := len(menu) - maxVisible; rest > 0 {
-					inRows = append(inRows, colorGray+fmt.Sprintf("(+%d more)", rest)+colorReset)
-				}
-				break
-			}
+		start, end := scrollWindow(m.tabIdx, len(menu), maxVisible)
+		for i, cmd := range menu[start:end] {
 			marker, style := "  ", colorGray
 			descStyle := colorGray
-			if i == m.tabIdx {
+			if start+i == m.tabIdx {
 				marker, style = "> ", colorYellow+colorBold
 				descStyle = ""
 			}
 			item := fmt.Sprintf("%s%s%s%s %s— %s%s", style, marker, cmd, colorReset, descStyle, slashDesc[cmd], colorReset)
 			inRows = append(inRows, hardWrap(fitWidth(item, m.width), m.width)...)
 		}
+		inRows = append(inRows, m.listFooter(start, end, len(menu), maxVisible)...)
 	}
 	return bodyRows, inRows
+}
+
+// scrollWindow возвращает полуинтервал видимых строк списка так, чтобы
+// выделение всегда было на экране. Без этого длинный список упирается в
+// «(+N more)»: стрелки двигают выделение, а показать его нечем.
+func scrollWindow(selected, total, size int) (start, end int) {
+	if total <= size {
+		return 0, total
+	}
+	start = selected - size/2
+	if start < 0 {
+		start = 0
+	}
+	if start > total-size {
+		start = total - size
+	}
+	return start, start + size
+}
+
+// listFooter подсказывает, что список длиннее окна и какая его часть
+// показана. Пустая строка означает, что всё уместилось.
+func (m tuiModel) listFooter(start, end, total, size int) []string {
+	if total <= size {
+		return nil
+	}
+	return []string{colorGray + fmt.Sprintf("(%d–%d of %d, ↑/↓)", start+1, end, total) + colorReset}
 }
 
 // shortCmd укорачивает команду для строки состояния: длинные composer-строки
@@ -525,11 +646,40 @@ func (m tuiModel) inputRow() int {
 }
 
 func (m tuiModel) render() string {
+	frame := m.renderFrame()
+	// Модальные окна (палитра, настройки) рисуются поверх готового кадра:
+	// так содержимое под ними остаётся видимым и не приходится держать
+	// отдельную раскладку строк ввода для каждого состояния.
+	if box, ok := m.modal(); ok && m.height > 0 && m.width > 0 {
+		frame, _, _ = overlayModal(frame, box, m.width, m.height)
+	}
+	return strings.Join(frame, "\n")
+}
+
+// modal возвращает содержимое открытого модального окна.
+func (m tuiModel) modal() (modalBox, bool) {
+	switch m.state {
+	case tuiPalette:
+		return m.paletteModal(), true
+	case tuiSettings:
+		return m.settingsModal(), true
+	case tuiSetup:
+		return m.setupModal(), true
+	case tuiModeMenu:
+		return m.modeMenuModal(), true
+	default:
+		return modalBox{}, false
+	}
+}
+
+// renderFrame рисует всё, кроме модального окна: скроллбек, строку ввода и
+// статусную строку.
+func (m tuiModel) renderFrame() []string {
 	bodyLines, inLines := m.layoutRows()
 	status := fitWidth(m.statusline(), m.width)
 
 	if m.height <= 0 {
-		return strings.Join(append(bodyLines, inLines...), "\n")
+		return append(bodyLines, inLines...)
 	}
 
 	avail := m.height - 1 - len(inLines)
@@ -566,17 +716,18 @@ func (m tuiModel) render() string {
 		frame = append(frame, "")
 	}
 	frame = append(frame, status)
-	return strings.Join(frame, "\n")
+	return frame
 }
 
 func (m tuiModel) statusline() string {
 	short, _ := os.Getwd()
 	shortName := shortPath(short)
-	left := fmt.Sprintf("%s[%s]%s mode:%s%s%s  model:%s%s",
+	left := fmt.Sprintf("%s[%s]%s mode:%s%s%s  model:%s%s  %s",
 		colorCyan, shortName, colorReset,
 		colorYellow, m.modeLabel, colorReset,
-		gray, m.modelLabel())
-	right := fmt.Sprintf("%shelp%s %sF1%s   %spalette%s %sCtrl+P%s",
+		gray, m.modelLabel(), m.proxyLabel())
+	right := fmt.Sprintf("%shelp%s %sF1%s   %spalette%s %sCtrl+P%s   %smode%s %sShift+Tab%s",
+		colorGray, colorReset, colorGray, colorReset,
 		colorGray, colorReset, colorGray, colorReset,
 		colorGray, colorReset, colorGray, colorReset)
 	ls := displayWidth(left)
@@ -592,24 +743,28 @@ func (m tuiModel) statusline() string {
 	return left + sep + right
 }
 
-// modelLabel показывает удалённую модель, когда активен pollinations, иначе
-// имя локального файла. Пустая строка на старте — это "none".
+// proxyLabel показывает, пойдёт ли ближайший сетевой запрос через прокси.
+// Молчаливое «прокси есть» обнаруживается уже по отказу соединения, а по
+// строке состояния — сразу.
+func (m tuiModel) proxyLabel() string {
+	if m.sessionProxy().Enabled() {
+		return "proxy:on"
+	}
+	return "proxy:off"
+}
+
+// modelLabel показывает удалённую модель с именем провайдера, а для
+// локального GGUF — имя файла. Пустая строка на старте — это "none".
 func (m tuiModel) modelLabel() string {
-	if m.s != nil && m.s.provider == config.ProviderPollinations {
-		model := m.s.cfg.RemoteModel
-		if model == "" {
-			model = config.DefaultRemoteModel
+	provider := currentProvider(m.s, m.rf.cfg.Provider)
+	if showsRemoteProvider(provider, m.localModelPath()) {
+		model := ""
+		if m.s != nil {
+			model = m.s.cfg.RemoteModel
 		}
-		return "pollinations:" + model
+		return string(provider) + ":" + firstNonEmpty(model, config.DefaultModelFor(provider))
 	}
-	modelPath := ""
-	if m.s != nil {
-		modelPath = m.s.cfg.ModelPath
-	}
-	if modelPath == "" {
-		modelPath = m.rf.cfg.ModelPath
-	}
-	return shortModelName(modelPath)
+	return shortModelName(m.localModelPath())
 }
 
 func shortModelName(p string) string {
@@ -681,14 +836,34 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// F1 матчится и по коду, и по строке: часть терминалов присылает
 	// shift+f1. Палитра не исключается — help нужен из любого экрана.
 	if msg.Code == tea.KeyF1 || msg.Keystroke() == "f1" {
+		// В режиме терминала транскрипта не видно: справка открывается ценой
+		// выхода из терминала, и об этом сказано прямо.
+		m = m.stopTerminal("(terminal session closed to show help)")
 		m.showHelp()
 		return m, nil
 	}
 	if msg.Keystroke() == "ctrl+q" {
 		return m.quitTui()
 	}
+	// Палитра открывается отовсюду, где бы ни был курсор: статусная строка
+	// обещает её на каждом экране, а в терминале Ctrl+P ушёл бы в оболочку.
+	if msg.Keystroke() == "ctrl+p" && m.state != tuiPalette {
+		return m.openPalette(), nil
+	}
 	if m.state == tuiPalette {
 		return m.handlePaletteKey(msg)
+	}
+	if m.state == tuiSettings {
+		return m.handleSettingsKey(msg)
+	}
+	if m.state == tuiSetup {
+		return m.handleSetupKey(msg)
+	}
+	if m.state == tuiModeMenu {
+		return m.handleModeMenuKey(msg)
+	}
+	if m.state == tuiTerminal {
+		return m.handleTerminalKey(msg)
 	}
 	if m.state == tuiSearch {
 		return m.handleSearchKey(msg)
@@ -741,8 +916,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Shift+Tab приходит как KeyTab с модификатором Shift: он занят
 		// под переключение режима, обычный Tab остаётся комплитом.
 		if msg.Mod&tea.ModShift != 0 {
-			m.cycleMode()
-			return m, nil
+			return m.cycleMode()
 		}
 		return m.handleTab()
 	case tea.KeyBackspace:
@@ -799,8 +973,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleHistoryNext()
 	case "ctrl+o":
-		// Model selection / download menu.
-		return m.openModelMenu(), nil
+		// Model selection / download menu, or the provider catalog.
+		return m.openModelMenu()
 	case "ctrl+i":
 		// Windows conhost sends Tab as HT (0x09), which decodes as ctrl+i.
 		return m.handleTab()
@@ -840,38 +1014,55 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cursorPos = nextWordPos(m.cursorPos, m.input)
 	case "alt+d":
 		m.input = deleteWordForward(m.input, &m.cursorPos)
-	case "ctrl+p":
-		return m.openPalette(), nil
 	}
 	return m, nil
+}
+
+// switchMode переводит сессию в режим mode. Конфиг оболочки, конфиг сессии
+// и подпись в статусной строке меняются одним путём, а вместе с режимом
+// terminal открывается встроенный терминал.
+func (m tuiModel) switchMode(mode config.Mode) (tuiModel, tea.Cmd) {
+	m.rf.cfg.Mode = mode
+	m.s.cfg.Mode = mode
+	m.modeLabel = modeLabel(mode)
+	if mode == config.ModeShell {
+		return m.startTerminal()
+	}
+	return m.stopTerminal(""), nil
 }
 
 // cycleMode переключает режим по кругу и печатает новый. Тот же путь, что
 // и у /mode: конфиг оболочки, конфиг сессии и подпись в статусной строке
 // должны разойтись не могут.
-func (m *tuiModel) cycleMode() {
+func (m tuiModel) cycleMode() (tea.Model, tea.Cmd) {
 	next := nextMode(m.rf.cfg.Mode)
-	m.rf.cfg.Mode = next
-	m.s.cfg.Mode = next
-	m.modeLabel = modeLabel(next)
+	mm, cmd := m.switchMode(next)
+	m = mm
 	m.addLine(fmt.Sprintf("%s[dmsh] mode: %s%s", colorCyan, modeLabel(next), colorReset))
-	if next == config.ModeShell {
-		m.addLine(fmt.Sprintf("%spress Enter on an empty line to open a terminal%s", colorGray, colorReset))
+	if next == config.ModeShell && m.term == nil {
+		m.addLine(fmt.Sprintf("%sterminal unavailable — Shift+Tab to return%s", colorGray, colorReset))
 	}
 	if next == config.ModeHelp {
 		m.addLine(fmt.Sprintf("%srun_command is disabled in help mode%s", colorGray, colorReset))
 	}
+	return m, cmd
 }
 
 // quitTui останавливает стриминг и завершает программу. Отмена контекста
+// нужна, чтобы не оставить инференс работать после выхода.
 // нужна, чтобы не оставить инференс работать после выхода.
 func (m tuiModel) quitTui() (tea.Model, tea.Cmd) {
 	if m.streamCancel != nil {
 		m.streamCancel()
 		m.streamCancel = nil
 	}
+	if m.setCancel != nil {
+		m.setCancel()
+		m.setCancel = nil
+	}
 	m.streaming = false
 	m.state = tuiIdle
+	m = m.stopTerminal("")
 	m.addLine("bye!")
 	return m, tea.Quit
 }
@@ -1040,10 +1231,11 @@ func (m tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 	m.tabMatches = nil
 	m.tabIdx = -1
 	if line == "" {
-		// В режиме терминала пустая строка — не «ничего», а открытие
-		// настоящей оболочки с отданным терминалом.
-		if m.rf.cfg.Mode == config.ModeShell {
-			return m.openTerminal()
+		// Режим терминала — это окно, а не отдельная оболочка поверх TUI.
+		// Строка ввода у него появляется только если псевдотерминал не
+		// запустился: тогда Enter пробует поднять терминал ещё раз.
+		if m.rf.cfg.Mode == config.ModeShell && m.term == nil {
+			return m.startTerminal()
 		}
 		return m, nil
 	}
@@ -1061,12 +1253,14 @@ func (m tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 		m.addLine(fmt.Sprintf("%s$ %s%s", colorCyan, cmd, colorReset))
 		return m.startDirectCommand(cmd)
 	}
+	// Режим терминала без псевдотерминала (ConPTY недоступен, оболочка не
+	// найдена) не должен отправлять текст в модель: пользователь здесь ждёт
+	// выполнения команды, а не её описания.
 	if m.rf.cfg.Mode == config.ModeShell {
-		// Непустая строка выполняется в псевдотерминале: программам, которым
-		// нужен tty (цвета, интерактив, размер окна), достаётся настоящий
-		// терминал, а TUI остаётся на экране.
-		m.addLine(fmt.Sprintf("%s$ %s%s", colorCyan, line, colorReset))
-		return m.startTerminalCommand(line)
+		if m.term == nil {
+			return m.startTerminal()
+		}
+		return m, nil
 	}
 	// Новый запрос пользователя — новый диалог уточнений и новый лимит
 	// автокоррекции.
@@ -1094,15 +1288,13 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			}
 		}
 	case line == "/shell", line == "terminal":
-		if m.rf.cfg.Mode != config.ModeShell {
-			// /shell вне режима терминала всё равно открывает сессию, но
-			// режим должен ей соответствовать, иначе следующий ввод снова
-			// уйдёт в модель.
-			m.rf.cfg.Mode = config.ModeShell
-			m.s.cfg.Mode = config.ModeShell
-			m.modeLabel = modeLabel(config.ModeShell)
-		}
-		return m.openTerminal()
+		// /shell вне режима терминала всё равно открывает терминал, но
+		// режим должен ему соответствовать, иначе следующий ввод снова
+		// уйдёт в модель.
+		m.rf.cfg.Mode = config.ModeShell
+		m.s.cfg.Mode = config.ModeShell
+		m.modeLabel = modeLabel(config.ModeShell)
+		return m.startTerminal()
 	case line == "/clear", line == "clear":
 		m.clearContent()
 		m.addLine("")
@@ -1117,6 +1309,14 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.showStats()
 	case line == "/model":
 		m.showModel()
+	case line == "/models":
+		// То же окно, что Ctrl+O: локальные файлы или каталог провайдера.
+		mm, cmd := m.openModelMenu()
+		return mm, cmd
+	case line == "/settings", line == "/proxy":
+		return m.openSettings(), nil
+	case line == "/setup":
+		return m.openSetup(), nil
 	case line == "/todo", line == "todo":
 		m.showTodo()
 	case strings.HasPrefix(line, "/todo "):
@@ -1136,13 +1336,13 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.handleAlias(line)
 	case IsModeCommand(line):
 		if line == "/mode" {
-			m.addLine(fmt.Sprintf("Current mode: %s", modeLabel(m.rf.cfg.Mode)))
-			return m, nil
+			// Пустая строка в /mode ничего не сообщала: открываем список
+			// режимов с текущим — выбрать можно и стрелками, и Shift+Tab.
+			return m.openModeMenu(), nil
 		}
 		if newMode := ParseModeCommand(line); newMode != "" {
-			m.rf.cfg.Mode = newMode
-			m.s.cfg.Mode = newMode
-			m.modeLabel = modeLabel(newMode)
+			mm, cmd := m.switchMode(newMode)
+			return mm, cmd
 		}
 	default:
 		m.addLine(fmt.Sprintf("%sunknown command: %s%s", colorRed, line, colorReset))
@@ -1628,11 +1828,11 @@ func deleteWordForward(s string, pos *int) string {
 func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("%s=== dmsh help ===%s", colorBold+colorCyan, colorReset))
 	m.addLine(fmt.Sprintf("%sModes:%s", colorBold, colorReset))
-	m.addLine(fmt.Sprintf("  %sai%s     — generate a command and run it automatically", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %shelp%s   — command plus explanation, nothing is executed", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sterminal%s— a real shell session with the terminal handed over", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sai%s      — generate a command and run it automatically", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %shelp%s    — command plus explanation, nothing is executed", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sterminal%s— a shell inside this window; Shift+Tab returns", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sShift+Tab%s — cycle modes, %sCtrl+P%s — pick one in the palette", colorYellow, colorReset, colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/mode%s [ai|help|shell] — show or set the mode", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/mode%s [ai|help|shell] — show the list of modes or set one", colorYellow, colorReset))
 	m.addLine("")
 	m.addLine(fmt.Sprintf("%sCommands:%s", colorBold, colorReset))
 	m.addLine(fmt.Sprintf("  %s!cmd%s         — run shell command directly", colorYellow, colorReset))
@@ -1641,7 +1841,10 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/model%s       — current model", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/shell%s       — open a terminal session", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/models%s      — model menu: files or provider catalog", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/setup%s       — how dmsh connects to the LLM, and how to change it", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/settings%s    — network settings: proxy, endpoint, connection test", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/shell%s       — open a shell in this window", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/bind%s        — key bindings", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/help%s        — this info", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/exit%s        — exit (or Ctrl+Q)", colorYellow, colorReset))
@@ -1650,7 +1853,7 @@ func (m *tuiModel) showHelp() {
 func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("%s=== Key Bindings ===%s", colorBold+colorCyan, colorReset))
 	m.addLine(fmt.Sprintf("  %sF1%s / %s/help%s    — this info", colorYellow, colorReset, colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+P%s          — command palette (all commands and modes)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+P%s          — command palette (all commands, modes and settings)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+Q%s          — exit", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sEsc%s / %sCtrl+C%s — cancel / stop", colorYellow, colorReset, colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+A/E/U/K%s   — start/end/delete-to-start/delete-to-end", colorYellow, colorReset))
@@ -1664,6 +1867,7 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sShift+Tab%s      — cycle modes (ai → help → terminal)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s↑/↓%s            — previous / next command from history", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sPgUp/PgDn%s      — scroll output", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sTerminal mode:%s  keys go to the shell; Shift+Tab returns to the prompt", colorYellow, colorReset))
 }
 
 // showHistory печатает историю из файла, а не из s.recent: recent хранит
@@ -1696,41 +1900,12 @@ func (m *tuiModel) showStats() {
 	m.addLine(fmt.Sprintf("  %sCurrent mode:%s  %s\n", colorBold, colorReset, modeLabel(m.rf.cfg.Mode)))
 }
 
+// showModel печатает экран /model теми же строками, что и REPL: общий
+// modelInfoLines, два разных вывода.
 func (m *tuiModel) showModel() {
-	m.addLine(fmt.Sprintf("\n%s=== Model ===%s", colorBold+colorCyan, colorReset))
-
-	provider := m.s.provider
-	if provider == "" {
-		provider = m.rf.cfg.Provider
+	for _, line := range modelInfoLines(m.s, currentProvider(m.s, m.rf.cfg.Provider), m.localModelPath()) {
+		m.addLine(line)
 	}
-	if provider == "" {
-		provider = config.ProviderAuto
-	}
-	m.addLine(fmt.Sprintf("  %sProvider:%s  %s", colorBold, colorReset, provider))
-
-	if provider == config.ProviderPollinations {
-		m.addLine(fmt.Sprintf("  %sIn use:%s  %s", colorBold, colorReset, firstNonEmpty(m.s.cfg.RemoteModel, config.DefaultRemoteModel)))
-		m.addLine(fmt.Sprintf("%sEndpoint:%s %s", colorGray, colorReset, pollinationsEndpoint(m.s.cfg.RemoteBaseURL)))
-		m.addLine(fmt.Sprintf("  %sSearch:%s   %s", colorBold, colorReset, firstNonEmpty(m.s.cfg.SearchModel, config.DefaultSearchModel)))
-		m.addLine(fmt.Sprintf("  %sTools:%s    %s", colorBold, colorReset, toolsLabel(m.s.cfg.ToolsEnabled)))
-		m.addLine(fmt.Sprintf("%sAuth:%s     anonymous (no token)", colorGray, colorReset))
-		m.addLine("")
-		return
-	}
-
-	modelPath := m.s.cfg.ModelPath
-	if modelPath == "" {
-		modelPath = m.rf.cfg.ModelPath
-	}
-	if modelPath == "" {
-		m.addLine(fmt.Sprintf("  %snone%s\n", colorYellow, colorReset))
-		return
-	}
-	m.addLine(fmt.Sprintf("  %sIn use:%s  %s", colorBold, colorReset, modelPath))
-	if fi, err := os.Stat(modelPath); err == nil {
-		m.addLine(fmt.Sprintf("  %sSize:%s    %d MB", colorBold, colorReset, fi.Size()/1024/1024))
-	}
-	m.addLine("")
 }
 
 func (m *tuiModel) showTodo() {

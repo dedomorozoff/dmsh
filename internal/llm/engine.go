@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 )
 
 // Provider определяет, откуда берётся инференс.
@@ -15,10 +17,21 @@ const (
 	ProviderLocal Provider = "local"
 	// ProviderPollinations — удалённый OpenAI-совместимый endpoint Pollinations.
 	ProviderPollinations Provider = "pollinations"
+	// ProviderOllama — локальный сервер Ollama через его
+	// OpenAI-совместимый endpoint.
+	ProviderOllama Provider = "ollama"
 	// ProviderAuto — локальная модель, если путь задан, иначе Pollinations.
 	// Выбор делается один раз при создании движка; при ошибке локального
 	// инференса удалённый провайдер молча не подставляется.
 	ProviderAuto Provider = "auto"
+)
+
+// Имена провайдеров для текста ошибок: они попадают в сообщение вместе с
+// кодом ответа, и «ollama HTTP 404» читается иначе, чем «pollinations
+// HTTP 404».
+const (
+	remoteProviderPollinations = "pollinations"
+	remoteProviderOllama       = "ollama"
 )
 
 // ErrNotBuiltWithCGO возвращается stub-реализацией, когда бинарь собран
@@ -41,6 +54,13 @@ type Params struct {
 	// RemoteModel и RemoteBaseURL — только для удалённых провайдеров.
 	RemoteModel   string
 	RemoteBaseURL string
+	// APIKey необязателен и уходит в заголовок Authorization. Его читают
+	// провайдеры, которые требуют ключ (Pollinations); Ollama его
+	// игнорирует. Пусто — запрос без заголовка.
+	APIKey string
+	// Proxy применяется к удалённым провайдерам. Нулевые настройки означают
+	// режим auto: переменные окружения HTTP_PROXY/NO_PROXY.
+	Proxy netproxy.Settings
 	// Timeout ограничивает один запрос к удалённому API (0 = DefaultRemoteTimeout).
 	Timeout time.Duration
 }
@@ -72,18 +92,20 @@ type Engine interface {
 }
 
 // New создаёт движок для выбранного провайдера. Реализация local доступна
-// всегда (в stub-сборке — заглушка), pollinations работает через HTTP и
-// собирается без CGO.
+// всегда (в stub-сборке — заглушка), удалённые провайдеры работают через HTTP
+// и собираются без CGO.
 func New(p Params) (Engine, error) {
 	switch p.Provider {
 	case ProviderPollinations:
 		return NewPollinations(p)
+	case ProviderOllama:
+		return NewOllama(p)
 	case "", ProviderLocal, ProviderAuto:
 		if p.ModelPath == "" {
 			return nil, ErrNoLocalModel
 		}
 		return newLocalEngine(p)
 	default:
-		return nil, fmt.Errorf("llm: unknown provider %q (expected local, pollinations or auto)", p.Provider)
+		return nil, fmt.Errorf("llm: unknown provider %q (expected local, pollinations, ollama or auto)", p.Provider)
 	}
 }

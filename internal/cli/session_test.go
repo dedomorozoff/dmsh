@@ -24,6 +24,7 @@ func isolateModelDir(t *testing.T) string {
 
 func TestResolveProviderPollinationsIgnoresLocalModels(t *testing.T) {
 	isolateModelDir(t)
+	t.Setenv(config.APIKeyEnv, "")
 	provider, notice, err := resolveProvider(config.Config{Provider: config.ProviderPollinations})
 	if err != nil {
 		t.Fatalf("resolveProvider: %v", err)
@@ -31,8 +32,14 @@ func TestResolveProviderPollinationsIgnoresLocalModels(t *testing.T) {
 	if provider != config.ProviderPollinations {
 		t.Fatalf("provider = %q, want pollinations", provider)
 	}
-	if notice != "" {
-		t.Fatalf("explicit provider must not produce a notice: %q", notice)
+	// Явный провайдер не откатывается на локальную модель, но отсутствие
+	// ключа — это ровно то, о чём пользователь должен узнать заранее.
+	if !strings.Contains(notice, config.APIKeyEnv) {
+		t.Fatalf("notice must mention the missing key, got %q", notice)
+	}
+	t.Setenv(config.APIKeyEnv, "sk-test")
+	if _, notice, _ = resolveProvider(config.Config{Provider: config.ProviderPollinations}); notice != "" {
+		t.Fatalf("a configured key must not produce a notice, got %q", notice)
 	}
 }
 
@@ -74,6 +81,26 @@ func TestResolveProviderAutoPrefersLocalModel(t *testing.T) {
 	}
 }
 
+// Единый порядок выбора провайдера: сессия, её конфиг, конфиг оболочки,
+// и только потом auto. Один хелпер вместо четырёх разных цепочек.
+func TestCurrentProviderChain(t *testing.T) {
+	s := &session{cfg: config.Config{Provider: config.ProviderOllama}, provider: config.ProviderPollinations}
+	if got := currentProvider(s, config.ProviderLocal); got != config.ProviderPollinations {
+		t.Fatalf("session provider must win, got %q", got)
+	}
+	s.provider = ""
+	if got := currentProvider(s, config.ProviderLocal); got != config.ProviderOllama {
+		t.Fatalf("session config must be next, got %q", got)
+	}
+	s.cfg.Provider = ""
+	if got := currentProvider(s, config.ProviderLocal); got != config.ProviderLocal {
+		t.Fatalf("shell config must be next, got %q", got)
+	}
+	if got := currentProvider(nil, ""); got != config.ProviderAuto {
+		t.Fatalf("no candidates must mean auto, got %q", got)
+	}
+}
+
 func TestResolveProviderLocalWithoutModelFails(t *testing.T) {
 	isolateModelDir(t)
 	_, _, err := resolveProvider(config.Config{Provider: config.ProviderLocal})
@@ -86,9 +113,25 @@ func TestResolveProviderLocalWithoutModelFails(t *testing.T) {
 	}
 }
 
+// Ollama выбирается явно и остаётся им: сервер локальный, ключ не нужен,
+// а адрес у него свой.
+func TestResolveProviderOllama(t *testing.T) {
+	isolateModelDir(t)
+	provider, notice, err := resolveProvider(config.Config{Provider: config.ProviderOllama})
+	if err != nil {
+		t.Fatalf("resolveProvider: %v", err)
+	}
+	if provider != config.ProviderOllama {
+		t.Fatalf("provider = %q, want ollama", provider)
+	}
+	if !strings.Contains(notice, llm.DefaultOllamaBaseURL) {
+		t.Fatalf("notice should name the address used, got %q", notice)
+	}
+}
+
 func TestResolveProviderUnknown(t *testing.T) {
 	isolateModelDir(t)
-	if _, _, err := resolveProvider(config.Config{Provider: config.Provider("ollama")}); err == nil {
+	if _, _, err := resolveProvider(config.Config{Provider: config.Provider("llamacpp")}); err == nil {
 		t.Fatal("unknown provider must fail")
 	}
 }
@@ -97,6 +140,7 @@ func TestToLLMProvider(t *testing.T) {
 	cases := map[config.Provider]llm.Provider{
 		config.ProviderLocal:        llm.ProviderLocal,
 		config.ProviderPollinations: llm.ProviderPollinations,
+		config.ProviderOllama:       llm.ProviderOllama,
 		config.ProviderAuto:         llm.ProviderAuto,
 		config.Provider("weird"):    llm.ProviderAuto,
 	}
@@ -104,6 +148,29 @@ func TestToLLMProvider(t *testing.T) {
 		if got := toLLMProvider(in); got != want {
 			t.Fatalf("toLLMProvider(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Модель по умолчанию принадлежит провайдеру: у Ollama и Pollinations они
+// разные, и флаг --provider не должен тащить чужую.
+func TestNormalizeForProviderPicksOwnDefault(t *testing.T) {
+	isolateModelDir(t)
+	cfg, err := normalizeForProvider(config.Config{Provider: config.ProviderOllama, RemoteModel: ""}, config.ProviderOllama)
+	if err != nil {
+		t.Fatalf("normalizeForProvider: %v", err)
+	}
+	if cfg.RemoteModel != config.DefaultOllamaModel {
+		t.Fatalf("RemoteModel = %q, want %q", cfg.RemoteModel, config.DefaultOllamaModel)
+	}
+	if cfg.ModelPath != "" {
+		t.Fatalf("remote provider must not keep a local model path, got %q", cfg.ModelPath)
+	}
+	kept, err := normalizeForProvider(config.Config{Provider: config.ProviderOllama, RemoteModel: "llama3.2"}, config.ProviderOllama)
+	if err != nil {
+		t.Fatalf("normalizeForProvider: %v", err)
+	}
+	if kept.RemoteModel != "llama3.2" {
+		t.Fatalf("RemoteModel = %q, want the explicit choice", kept.RemoteModel)
 	}
 }
 
@@ -140,6 +207,7 @@ func TestNewSessionLocalWithoutModelFails(t *testing.T) {
 }
 
 func TestShowModelRemoteProvider(t *testing.T) {
+	t.Setenv(config.APIKeyEnv, "")
 	s := &session{
 		cfg:      config.Config{Provider: config.ProviderPollinations, RemoteModel: "mistral"},
 		provider: config.ProviderPollinations,
@@ -147,10 +215,26 @@ func TestShowModelRemoteProvider(t *testing.T) {
 	var out strings.Builder
 	showModel(&out, s)
 	text := out.String()
-	for _, want := range []string{"pollinations", "mistral", llm.DefaultPollinationsBaseURL, "anonymous"} {
+	for _, want := range []string{"pollinations", "mistral", llm.DefaultPollinationsBaseURL, "no api key"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("showModel output should mention %q:\n%s", want, text)
 		}
+	}
+
+	// Ключ виден только откуда он, но никогда сам: строка с секретом в вывод
+	// сессии попадать не должна.
+	t.Setenv(config.APIKeyEnv, "sk-secret-value")
+	s.cfg.RemoteAPIKey = "sk-file-value"
+	out.Reset()
+	showModel(&out, s)
+	text = out.String()
+	for _, secret := range []string{"sk-secret-value", "sk-file-value"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("api key leaked into /model output: %q", secret)
+		}
+	}
+	if !strings.Contains(text, config.APIKeyEnv) {
+		t.Fatalf("output should name where the key comes from:\n%s", text)
 	}
 }
 
@@ -161,8 +245,31 @@ func TestShowModelLocalWithAutoHint(t *testing.T) {
 	}
 	var out strings.Builder
 	showModel(&out, s)
-	if !strings.Contains(out.String(), "dmsh config set provider pollinations") {
-		t.Fatalf("auto should hint at the remote provider:\n%s", out.String())
+	// auto с локальной моделью — это локальный провайдер, а подсказка
+	// предлагает альтернативу, а не описывает уже выбранное.
+	if !strings.Contains(out.String(), filepath.Join("models", "tiny.gguf")) {
+		t.Fatalf("auto with a gguf must show the local model:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "dmsh config set provider") {
+		t.Fatalf("auto should hint at the alternative provider:\n%s", out.String())
+	}
+}
+
+func TestShowModelOllama(t *testing.T) {
+	s := &session{
+		cfg:      config.Config{Provider: config.ProviderOllama, RemoteModel: "llama3.2"},
+		provider: config.ProviderOllama,
+	}
+	var out strings.Builder
+	showModel(&out, s)
+	text := out.String()
+	for _, want := range []string{"ollama", "llama3.2", llm.DefaultOllamaBaseURL} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("showModel output should mention %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "no api key") {
+		t.Fatalf("ollama needs no key, so the line about it is noise:\n%s", text)
 	}
 }
 

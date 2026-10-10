@@ -16,6 +16,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/vt"
 )
 
 func newTestTui() tuiModel {
@@ -513,7 +514,7 @@ func TestPaletteRowsFitWidth(t *testing.T) {
 	m.width = 40
 	m.height = 24
 	m = press(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
-	for _, row := range m.paletteRows() {
+	for _, row := range m.paletteModal().rows {
 		if w := displayWidth(row); w > m.width {
 			t.Fatalf("palette row is %d wide, want <= %d: %q", w, m.width, row)
 		}
@@ -532,7 +533,7 @@ func TestPaletteNoMatchKeepsPaletteOpen(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("no match must not run anything")
 	}
-	if !strings.Contains(strings.Join(m.paletteRows(), "\n"), "no matching command") {
+	if !strings.Contains(strings.Join(m.paletteModal().rows, "\n"), "no matching command") {
 		t.Fatal("empty result should say so")
 	}
 }
@@ -565,7 +566,7 @@ func TestCtrlQQuitsWhileStreaming(t *testing.T) {
 }
 
 func TestF1WorksInEveryState(t *testing.T) {
-	states := []tuiState{tuiIdle, tuiModelMenu, tuiSearch, tuiConfirming, tuiQuestion, tuiStreaming, tuiPalette}
+	states := []tuiState{tuiIdle, tuiModelMenu, tuiSearch, tuiConfirming, tuiQuestion, tuiStreaming, tuiPalette, tuiSettings, tuiSetup, tuiModeMenu, tuiRunning}
 	// F1 reaches us as tea.KeyF1; some terminals add shift, so both
 	// spellings must be handled.
 	keys := []tea.KeyPressMsg{
@@ -689,33 +690,21 @@ func TestHistorySearch(t *testing.T) {
 	}
 }
 
-// Режим терминала никогда не обращается к модели: команда уходит в
-// псевдотерминал, а не в LLM.
+// Режим терминала никогда не обращается к модели: команды уходят в
+// псевдотерминал внутри окна, а не в LLM.
 func TestShellModeNoLLM(t *testing.T) {
 	m := newTestTui()
 	m.rf.cfg.Mode = config.ModeShell
 	m.modeLabel = modeLabel(config.ModeShell)
 	m.input = "pwd date"
 	m.cursorPos = 8
-	mm, cmd := m.handleEnter()
+	mm, _ := m.handleEnter()
 	m = mm.(tuiModel)
 	if m.streaming || m.state == tuiStreaming {
 		t.Fatal("shell mode must not enter streaming/LLM state")
 	}
-	if !strings.Contains(m.content, "$ pwd date") {
-		t.Fatalf("shell mode should echo the executed command, content:\n%s", m.content)
-	}
-	// Команда возвращается как terminalRanMsg, а не как запрос к модели.
-	if cmd == nil {
-		t.Fatal("terminal mode should return a command to run in the pty")
-	}
-	msg := cmd()
-	ran, ok := msg.(terminalRanMsg)
-	if !ok {
-		t.Fatalf("expected terminalRanMsg, got %T", msg)
-	}
-	if ran.command != "pwd date" {
-		t.Fatalf("command = %q, want %q", ran.command, "pwd date")
+	if m.s.lastInput == "pwd date" {
+		t.Fatalf("shell mode sent the command to the LLM: %q", m.s.lastInput)
 	}
 }
 
@@ -723,38 +712,73 @@ func TestTerminalModeEmptyLineOpensShell(t *testing.T) {
 	m := newTestTui()
 	m.rf.cfg.Mode = config.ModeShell
 	m.modeLabel = modeLabel(config.ModeShell)
-	m.rf.cfg.Shell = testShell()
-	mm, cmd := m.handleEnter()
+	mm, _ := m.handleEnter()
 	m = mm.(tuiModel)
-	if cmd == nil {
-		t.Fatal("empty line in terminal mode should open a shell")
-	}
 	if m.streaming || m.state == tuiStreaming {
 		t.Fatal("opening a shell must not touch the LLM")
 	}
+	if m.rf.cfg.Mode != config.ModeShell {
+		t.Fatalf("mode = %q, want shell", m.rf.cfg.Mode)
+	}
+	// Без настроенной оболочки терминал не поднимается — и об этом сказано
+	// прямо, а не тихо.
+	if !strings.Contains(m.content, "no shell configured") {
+		t.Fatalf("empty line in terminal mode should try to open a shell:\n%s", m.content)
+	}
 }
 
-func TestTerminalModePrintsOutputAndAudits(t *testing.T) {
+// Вывод встроенного терминала рисуется на месте, а не попадает в
+// транскрипт: пользователь смотрит на экран оболочки.
+func TestTerminalOutputGoesToScreen(t *testing.T) {
+	m := newTestTui()
+	m.width, m.height = 40, 6
+	m.state = tuiTerminal
+	m.term = &terminalPane{screen: vt.NewScreen(40, 5)}
+
+	mm, _ := m.Update(terminalOutputMsg{data: []byte("PS D:\\dmsh> echo dmsh-term-marker\r\ndmsh-term-marker")})
+	got := mm.(tuiModel)
+	rows := got.render()
+	if !strings.Contains(rows, "dmsh-term-marker") {
+		t.Fatalf("terminal output must be visible on screen, frame:\n%s", rows)
+	}
+	if strings.Contains(got.content, "dmsh-term-marker") {
+		t.Fatalf("terminal output must not be mixed into the transcript:\n%s", got.content)
+	}
+}
+
+// Выход оболочки возвращает ввод в строку: оставаться в режиме terminal
+// без терминала нельзя.
+func TestTerminalExitReportsAndLeavesMode(t *testing.T) {
 	m := newTestTui()
 	m.rf.cfg.Mode = config.ModeShell
+	m.s.cfg.Mode = config.ModeShell
 	m.modeLabel = modeLabel(config.ModeShell)
-	m.s.cfg.AuditFile = ""
-	mm, _ := m.Update(terminalRanMsg{command: "ls -la", output: "file.txt", code: 0})
-	got := mm.(tuiModel)
-	if !strings.Contains(got.content, "file.txt") {
-		t.Fatalf("command output should reach the transcript:\n%s", got.content)
-	}
-	if got.state != tuiIdle {
-		t.Fatalf("state = %d after the command, want tuiIdle", got.state)
-	}
-	if len(got.s.recent) == 0 || got.s.recent[len(got.s.recent)-1] != "ls -la" {
-		t.Fatalf("command should be recorded in recent: %v", got.s.recent)
-	}
+	m.state = tuiTerminal
 
-	mm, _ = m.Update(terminalRanMsg{command: "false", output: "", code: 3})
-	got = mm.(tuiModel)
-	if !strings.Contains(got.content, "exit 3") {
-		t.Fatalf("non-zero exit should be reported:\n%s", got.content)
+	mm, _ := m.Update(terminalExitMsg{code: 0})
+	got := mm.(tuiModel)
+	if got.state != tuiIdle {
+		t.Fatalf("state = %d after the shell exited, want tuiIdle", got.state)
+	}
+	if got.rf.cfg.Mode != config.ModeAI {
+		t.Fatalf("mode = %q after the shell exited, want ai", got.rf.cfg.Mode)
+	}
+	if !strings.Contains(got.content, "shell exited") {
+		t.Fatalf("leaving the terminal should be reported:\n%s", got.content)
+	}
+}
+
+// /model в TUI печатает те же строки, что и REPL: общий modelInfoLines.
+func TestShowModelUsesSharedLines(t *testing.T) {
+	m := newTestTui()
+	m.s.provider = config.ProviderPollinations
+	m.s.cfg.RemoteModel = "mistral"
+	m.s.cfg.RemoteBaseURL = "https://example.test/v1"
+	m.showModel()
+	for _, want := range []string{"pollinations", "mistral", "https://example.test/v1"} {
+		if !strings.Contains(m.content, want) {
+			t.Fatalf("TUI /model should show %q:\n%s", want, m.content)
+		}
 	}
 }
 
@@ -818,94 +842,22 @@ func TestStatuslineHintsMatchRealBindings(t *testing.T) {
 	}
 }
 
+// /shell переводит сессию в режим терминала: иначе следующий ввод снова
+// уйдёт в модель.
 func TestShellSlashCommandSwitchesToTerminalMode(t *testing.T) {
 	m := newTestTui()
-	m.rf.cfg.Shell = testShell()
-	mm, cmd := m.handleSlash("/shell")
+	mm, _ := m.handleSlash("/shell")
 	got := mm.(tuiModel)
 	if got.rf.cfg.Mode != config.ModeShell {
-		t.Fatalf("mode = %q, want shell so the session matches the opened shell", got.rf.cfg.Mode)
+		t.Fatalf("mode = %q, want shell so the session matches the opened terminal", got.rf.cfg.Mode)
 	}
-	if cmd == nil {
-		t.Fatal("/shell should return a command to hand the terminal over")
+	if got.s.cfg.Mode != config.ModeShell {
+		t.Fatalf("session mode = %q, want shell", got.s.cfg.Mode)
 	}
-}
-
-// Мусор от оболочки не должен попадать в транскрипт: в выводе PTY остаются
-// приглашения, эхо введённых строк и escape-последовательности.
-func TestStripShellNoise(t *testing.T) {
-	// Реальный вывод PowerShell из-под ConPTY.
-	powershell := "\x1b[?9001h\x1b[?25l\x1b[2J\x1b[m\x1b[H" +
-		"PS D:\\dmsh> echo dmsh-marker\r\n" +
-		"dmsh-marker\r\n" +
-		"PS D:\\dmsh> exit\r\n" +
-		"\x1b[?9001l"
-	if got, want := stripShellNoise(ansi.Strip(powershell), "echo dmsh-marker"), "dmsh-marker"; got != want {
-		t.Errorf("powershell output = %q, want %q", got, want)
-	}
-
-	bash := "user@host:~$ ls -la\r\ntotal 0\r\ndrwxr-xr-x 2 root root 40 .\r\nuser@host:~$ exit\r\n"
-	if got, want := stripShellNoise(ansi.Strip(bash), "ls -la"), "total 0\ndrwxr-xr-x 2 root root 40 ."; got != want {
-		t.Errorf("bash output = %q, want %q", got, want)
-	}
-
-	// Оболочка не отэхоила команду — выживает всё, кроме чистых приглашений.
-	noEcho := "PS D:\\dmsh> \r\nresult line\r\n"
-	if got, want := stripShellNoise(noEcho, "whatever"), "result line"; got != want {
-		t.Errorf("no-echo output = %q, want %q", got, want)
-	}
-}
-
-// Реальный вывод терминального режима: команда + выход из оболочки.
-func TestStartTerminalCommandStripsShellNoise(t *testing.T) {
-	if testing.Short() {
-		t.Skip("spawns an interactive shell")
-	}
-	m := newTestTui()
-	m.rf.cfg.Mode = config.ModeShell
-	m.modeLabel = modeLabel(config.ModeShell)
-	m.rf.cfg.Shell = testShell()
-
-	mm, cmd := m.startTerminalCommand("echo dmsh-tui-marker")
-	if cmd == nil {
-		t.Fatal("expected a command to run")
-	}
-	msg, ok := cmd().(terminalRanMsg)
-	if !ok {
-		t.Fatal("expected terminalRanMsg")
-	}
-	if msg.err != nil {
-		t.Fatalf("run failed: %v", msg.err)
-	}
-	if !strings.Contains(msg.output, "dmsh-tui-marker") {
-		t.Fatalf("output should contain the command result, got %q", msg.output)
-	}
-	if strings.Contains(msg.output, ">") {
-		t.Fatalf("shell prompts leaked into the transcript: %q", msg.output)
-	}
-	if strings.Contains(msg.output, "\x1b[") {
-		t.Fatalf("escape sequences leaked into the transcript: %q", msg.output)
-	}
-
-	got := mm.(tuiModel)
-	got.printTerminalRun(msg)
-	if strings.Contains(got.content, ">") && strings.Contains(got.content, "PS ") {
-		t.Fatalf("transcript polluted with shell prompts:\n%s", got.content)
-	}
-}
-
-func TestResumeFromShellReportsExit(t *testing.T) {
-	m := newTestTui()
-	m.rf.cfg.Mode = config.ModeShell
-	m.modeLabel = modeLabel(config.ModeShell)
-	m.rf.cfg.Shell = testShell()
-	mm, _ := m.Update(shellExitedMsg{code: 0})
-	got := mm.(tuiModel)
-	if got.state != tuiIdle {
-		t.Fatalf("state = %d after leaving the shell, want tuiIdle", got.state)
-	}
-	if !strings.Contains(got.content, "shell exited") {
-		t.Fatalf("leaving the shell should be reported:\n%s", got.content)
+	// Без настроенной оболочки терминал не поднимается, и это должно быть
+	// сказано прямо, а не тихо проигнорировано.
+	if !strings.Contains(got.content, "no shell configured") {
+		t.Fatalf("a missing shell should be reported:\n%s", got.content)
 	}
 }
 
@@ -1052,15 +1004,40 @@ func TestModelMenuEnterLoadsInstalled(t *testing.T) {
 	}
 }
 
-func TestModelMenuTypeKeyClosesAndEdits(t *testing.T) {
+// Печатные клавиши фильтруют список моделей, а не закрывают окно: каталог
+// удалённого провайдера длинный, и искать его иначе нечем.
+func TestModelMenuTypeKeyFiltersList(t *testing.T) {
 	m := newTestTui()
 	m = press(m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
-	m = press(m, keyText("x"))
-	if m.state != tuiIdle {
-		t.Fatalf("state = %d after typing, want tuiIdle", m.state)
+	if m.state != tuiModelMenu {
+		t.Fatalf("state = %d, want tuiModelMenu", m.state)
 	}
-	if m.input != "x" {
-		t.Fatalf("input = %q, want %q", m.input, "x")
+	m.modelItems = []modelMenuItem{
+		{name: "qwen3:8b", installed: true},
+		{name: "qwen2.5-coder:7b", installed: true},
+		{name: "deepcoder:1.5b", installed: true},
+	}
+	m = press(m, keyText("qwen2"))
+	if m.state != tuiModelMenu {
+		t.Fatalf("typing must keep the menu open, state = %d", m.state)
+	}
+	if got := m.visibleModelItems(); len(got) != 1 || got[0].name != "qwen2.5-coder:7b" {
+		t.Fatalf("filtered = %+v, want only qwen2.5-coder:7b", got)
+	}
+	if !strings.Contains(ansi.Strip(m.render()), "filter: qwen2") {
+		t.Fatalf("the filter should be visible:\n%s", m.render())
+	}
+	// Esc снимает фильтр и только потом закрывает окно.
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.state != tuiModelMenu || m.modelFilter != "" {
+		t.Fatalf("esc must clear the filter first, state = %d filter = %q", m.state, m.modelFilter)
+	}
+	if got := m.visibleModelItems(); len(got) != 3 {
+		t.Fatalf("after clearing the filter: %d items, want 3", len(got))
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.state != tuiIdle {
+		t.Fatalf("a second esc must close the menu, state = %d", m.state)
 	}
 }
 

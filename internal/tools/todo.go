@@ -44,7 +44,9 @@ func NewTodoStore() *TodoStore {
 
 // Add добавляет задачу и возвращает её с присвоенным id.
 func (s *TodoStore) Add(task string) (TodoItem, error) {
-	task = strings.TrimSpace(task)
+	// Задача — одна строка: переносы строк внутри неё давали пустые строки
+	// в списке и сдвигали подписи статусов.
+	task = strings.Join(strings.Fields(task), " ")
 	if task == "" {
 		return TodoItem{}, fmt.Errorf("task is required")
 	}
@@ -116,7 +118,7 @@ func (s *TodoStore) Render() string {
 		if it.Done {
 			state = "done"
 		}
-		fmt.Fprintf(&b, "%s [%d] %s (%s)\n", state, it.ID, it.Task, state)
+		fmt.Fprintf(&b, "%s [%d] %s\n", state, it.ID, it.Task)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

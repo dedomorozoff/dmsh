@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 )
 
 // sseServer отдаёт заранее заданные SSE-строки и проверяет тело запроса.
@@ -39,7 +41,7 @@ func TestNewPollinationsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPollinations: %v", err)
 	}
-	p := eng.(*pollinationsEngine)
+	p := eng.(*openaiEngine)
 	if p.baseURL != "https://example.com/openai" {
 		t.Fatalf("baseURL = %q, want trailing slash trimmed", p.baseURL)
 	}
@@ -54,7 +56,7 @@ func TestNewPollinationsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPollinations(empty): %v", err)
 	}
-	d := def.(*pollinationsEngine)
+	d := def.(*openaiEngine)
 	if d.baseURL != DefaultPollinationsBaseURL || d.model != DefaultPollinationsModel {
 		t.Fatalf("defaults = %q/%q, want %q/%q", d.baseURL, d.model, DefaultPollinationsBaseURL, DefaultPollinationsModel)
 	}
@@ -310,24 +312,61 @@ func TestPollinationsRateLimitHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("429 must be an error")
 	}
-	if !strings.Contains(err.Error(), "one request at a time") {
-		t.Fatalf("error should explain the anonymous limit: %v", err)
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Fatalf("error should explain the rate limit: %v", err)
 	}
 }
 
 func TestPollinationsTokenHint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusPaymentRequired)
+		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 
 	eng, _ := NewPollinations(Params{RemoteBaseURL: srv.URL})
 	_, err := eng.Generate(context.Background(), "", "hi", SamplingOptions{})
 	if err == nil {
-		t.Fatal("402 must be an error")
+		t.Fatal("401 must be an error")
 	}
-	if !strings.Contains(err.Error(), "--remote-base-url") {
-		t.Fatalf("error should point to an alternative: %v", err)
+	if !strings.Contains(err.Error(), "POLLINATIONS_API_KEY") {
+		t.Fatalf("error should say how to supply a key: %v", err)
+	}
+}
+
+// Ключ уходит в заголовок Authorization: без него Pollinations отвечает 401.
+func TestPollinationsSendsAPIKey(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	eng, _ := NewPollinations(Params{RemoteBaseURL: srv.URL, APIKey: " sk-test "})
+	if _, err := eng.Generate(context.Background(), "", "hi", SamplingOptions{}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if gotAuth != "Bearer sk-test" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer sk-test")
+	}
+}
+
+// Без ключа заголовка нет вовсе — старый анонимный режим должен работать
+// для тех endpoint'ов, которые его ещё принимают.
+func TestPollinationsWithoutKeySendsNoAuth(t *testing.T) {
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present = r.Header["Authorization"]
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	eng, _ := NewPollinations(Params{RemoteBaseURL: srv.URL})
+	if _, err := eng.Generate(context.Background(), "", "hi", SamplingOptions{}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if present {
+		t.Fatal("an empty key must not produce an Authorization header")
 	}
 }
 
@@ -389,5 +428,103 @@ func TestToolCallUnmarshalAcceptsFlatForm(t *testing.T) {
 	}
 	if call.ID != "c2" || call.Name != "list_dir" || call.Arguments != "{}" {
 		t.Fatalf("call = %+v", call)
+	}
+}
+
+// TestPollinationsGenerateThroughProxy проверяет, что удалённый запрос
+// действительно уходит через настроенный прокси, а не напрямую: без этого
+// режим custom выглядел бы работающим, пока сеть не блокирована.
+func TestPollinationsGenerateThroughProxy(t *testing.T) {
+	var proxied bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied = true
+		if r.Host != "blocked.invalid" {
+			t.Errorf("proxy saw host %q, want blocked.invalid", r.Host)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`))
+	}))
+	defer proxy.Close()
+
+	eng, err := NewPollinations(Params{
+		RemoteBaseURL: "http://blocked.invalid/openai",
+		Proxy:         netproxy.Settings{Mode: netproxy.ModeCustom, URL: proxy.URL},
+	})
+	if err != nil {
+		t.Fatalf("NewPollinations: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	out, err := eng.Generate(context.Background(), "sys", "ping", SamplingOptions{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out != "pong" {
+		t.Fatalf("Generate() = %q, want %q", out, "pong")
+	}
+	if !proxied {
+		t.Fatal("request did not go through the proxy")
+	}
+}
+
+func TestPollinationsNoProxyBypass(t *testing.T) {
+	var proxied bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied = true
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	direct := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"direct"}}]}`))
+	}))
+	defer direct.Close()
+
+	eng, err := NewPollinations(Params{
+		RemoteBaseURL: direct.URL,
+		Proxy: netproxy.Settings{
+			Mode:    netproxy.ModeCustom,
+			URL:     proxy.URL,
+			NoProxy: "127.0.0.1, localhost",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPollinations: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	out, err := eng.Generate(context.Background(), "sys", "ping", SamplingOptions{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out != "direct" {
+		t.Fatalf("Generate() = %q, want %q (no_proxy should bypass the proxy)", out, "direct")
+	}
+	if proxied {
+		t.Fatal("request went through the proxy despite no_proxy")
+	}
+}
+
+func TestPollinationsBadProxyRejected(t *testing.T) {
+	_, err := NewPollinations(Params{
+		RemoteBaseURL: "https://example.com/openai",
+		Proxy:         netproxy.Settings{Mode: netproxy.ModeCustom, Proto: "ftp", Host: "127.0.0.1", Port: 21},
+	})
+	if err == nil {
+		t.Fatal("unsupported proxy protocol should be rejected at engine creation")
+	}
+	if !strings.Contains(err.Error(), "proxy") {
+		t.Fatalf("error = %v, want it to mention proxy", err)
+	}
+}
+
+func TestPollinationsProxyWithoutHostRejected(t *testing.T) {
+	_, err := NewPollinations(Params{
+		RemoteBaseURL: "https://example.com/openai",
+		Proxy:         netproxy.Settings{Mode: netproxy.ModeCustom},
+	})
+	if err == nil {
+		t.Fatal("proxy_mode=custom without a host should be rejected at engine creation")
 	}
 }

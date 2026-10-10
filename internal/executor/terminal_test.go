@@ -92,6 +92,56 @@ func TestRunTerminalRunsSingleCommand(t *testing.T) {
 	}
 }
 
+// Встроенный в окно режим терминала управляет оболочкой сам: пишет ввод и
+// читает вывод, не отдавая терминал пользователя.
+func TestTerminalSessionReadWrite(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns an interactive shell")
+	}
+	opts := TerminalOptsFromShell(interactiveShell(), TerminalSize{Cols: 80, Rows: 24})
+	sess, err := StartTerminal(opts)
+	if err != nil {
+		if errors.Is(err, ErrNoTerminal) {
+			t.Skipf("no pseudo-terminal on this platform: %v", err)
+		}
+		t.Fatalf("StartTerminal: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	if _, err := sess.Write([]byte(TerminalScript("echo dmsh-session-marker", "exit"))); err != nil {
+		t.Fatalf("write to session: %v", err)
+	}
+
+	var out bytes.Buffer
+	buf := make([]byte, 4096)
+	deadline := time.After(60 * time.Second)
+	for {
+		if strings.Contains(out.String(), "dmsh-session-marker") {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("session produced no output, got %q", out.String())
+		default:
+		}
+		n, err := sess.Read(buf)
+		if n > 0 {
+			out.Write(buf[:n])
+		}
+		if err != nil {
+			if !strings.Contains(out.String(), "dmsh-session-marker") {
+				t.Fatalf("read failed before the marker arrived: %v (%q)", err, out.String())
+			}
+			break
+		}
+	}
+	// Close обязан быть идемпотентным: вызывающий код закрывает сессию и
+	// при выходе из оболочки, и при возврате в другой режим.
+	if err := sess.Close(); err != nil {
+		t.Logf("second Close: %v", err)
+	}
+}
+
 // Терминал должен дать программе настоящий tty: иначе всё, что печатает
 // интерактивная оболочка, теряется. Проверяем вывод и код завершения.
 func TestRunTerminalExitsAndCapturesOutput(t *testing.T) {

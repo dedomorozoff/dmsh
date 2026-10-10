@@ -12,14 +12,34 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 )
 
 // DefaultRemoteModel — модель Pollinations, если пользователь не выбрал другую.
 const DefaultRemoteModel = "openai"
 
+// DefaultOllamaModel — модель Ollama по умолчанию. Пустое значение remote_model
+// означает «покажи то, что нужно провайдеру», а не «всегда openai»: у Ollama
+// своей модели нет, и запрос с чужим именем падает с 404.
+const DefaultOllamaModel = "qwen2.5-coder"
+
 // DefaultSearchModel — модель с веб-поиском, используемая инструментом
 // websearch.
 const DefaultSearchModel = "gemini-search"
+
+// APIKeyEnv — переменная окружения с ключом удалённого провайдера. Она
+// важнее файла конфига: ключ не обязан лежать на диске.
+const APIKeyEnv = "POLLINATIONS_API_KEY"
+
+// DefaultModelFor возвращает модель по умолчанию для провайдера. Локальный
+// GGUF и не-OLLama провайдеры отдают DefaultRemoteModel.
+func DefaultModelFor(p Provider) string {
+	if p == ProviderOllama {
+		return DefaultOllamaModel
+	}
+	return DefaultRemoteModel
+}
 
 // Mode определяет режим работы dmsh.
 type Mode string
@@ -40,6 +60,9 @@ const (
 	// ProviderPollinations — удалённый OpenAI-совместимый API Pollinations,
 	// локальные модели игнорируются.
 	ProviderPollinations Provider = "pollinations"
+	// ProviderOllama — локальный сервер Ollama через его
+	// OpenAI-совместимый endpoint. Ключ не нужен.
+	ProviderOllama Provider = "ollama"
 	// ProviderAuto — локальный GGUF, если он есть, иначе Pollinations.
 	// Решение принимается один раз при старте сессии.
 	ProviderAuto Provider = "auto"
@@ -49,21 +72,30 @@ const (
 // оно нормализуется в ProviderAuto в Validate.
 func (p Provider) Valid() bool {
 	switch p {
-	case ProviderLocal, ProviderPollinations, ProviderAuto:
+	case ProviderLocal, ProviderPollinations, ProviderOllama, ProviderAuto:
 		return true
 	default:
 		return false
 	}
 }
 
+// Remote сообщает, что провайдер работает по сети. У локального GGUF нет
+// адреса: его нельзя пересобирать при смене прокси, и показывать ему
+// endpoint бессмысленно.
+func (p Provider) Remote() bool { return p != "" && p != ProviderLocal }
+
 // Config описывает рантайм-настройки dmsh. Поля сознательно плоские,
 // чтобы их легко было пробрасывать из флагов CLI и из JSON-файла.
 type Config struct {
-	ModelPath          string            `json:"model_path"`
-	DefaultModel       string            `json:"default_model"`
-	Provider           Provider          `json:"provider"`
-	RemoteModel        string            `json:"remote_model,omitempty"`
-	RemoteBaseURL      string            `json:"remote_base_url,omitempty"`
+	ModelPath     string   `json:"model_path"`
+	DefaultModel  string   `json:"default_model"`
+	Provider      Provider `json:"provider"`
+	RemoteModel   string   `json:"remote_model,omitempty"`
+	RemoteBaseURL string   `json:"remote_base_url,omitempty"`
+	// RemoteAPIKey — ключ удалённого провайдера (Pollinations требует его
+	// для генерации). Пусто: запрос уходит без заголовка и сервер сам
+	// объяснит, что ключ нужен. Переменная окружения важнее файла.
+	RemoteAPIKey       string            `json:"remote_api_key,omitempty"`
 	SearchModel        string            `json:"search_model,omitempty"`
 	ToolsEnabled       bool              `json:"tools_enabled"`
 	Threads            int               `json:"threads"`
@@ -82,6 +114,83 @@ type Config struct {
 	SuspiciousPatterns []string          `json:"suspicious_patterns,omitempty"`
 	Allowlist          []string          `json:"allowlist,omitempty"`
 	Aliases            map[string]string `json:"aliases,omitempty"`
+
+	// Сеть: прокси применяется ко всем удалённым запросам (LLM-API,
+	// websearch, скачивание GGUF). Поля плоские — так же, как остальные,
+	// чтобы их легко было задать флагом или из JSON.
+	ProxyMode     netproxy.Mode `json:"proxy_mode,omitempty"`
+	ProxyProto    string        `json:"proxy_proto,omitempty"`
+	ProxyHost     string        `json:"proxy_host,omitempty"`
+	ProxyPort     int           `json:"proxy_port,omitempty"`
+	ProxyUser     string        `json:"proxy_user,omitempty"`
+	ProxyPassword string        `json:"proxy_password,omitempty"`
+	NoProxy       string        `json:"no_proxy,omitempty"`
+
+	// ProxyURL — старый единый адрес. Сохраняется только для чтения:
+	// Proxy() раскладывает его по полям выше, а SetProxy записывает
+	// обратно уже поля, поэтому в конфиге он постепенно исчезает сам.
+	ProxyURL string `json:"proxy_url,omitempty"`
+}
+
+// APIKey возвращает ключ удалённого провайдера. Переменная окружения важнее
+// файла: так ключ можно вообще не хранить на диске. Пустая строка означает
+// «запрос без заголовка» — не ошибку.
+func (c Config) APIKey() string {
+	if k := strings.TrimSpace(os.Getenv(APIKeyEnv)); k != "" {
+		return k
+	}
+	return strings.TrimSpace(c.RemoteAPIKey)
+}
+
+// MaskedAPIKey показывает, что ключ задан, не показывая его: значение
+// попадает в вывод сессии и на скриншоты.
+func (c Config) MaskedAPIKey() string {
+	if c.APIKey() == "" {
+		return ""
+	}
+	return strings.Repeat("*", 8)
+}
+
+// APIKeySource отвечает, откуда взят ключ: "env" или "config". Пустая
+// строка — ключа нет.
+func (c Config) APIKeySource() string {
+	switch {
+	case c.APIKey() == "":
+		return ""
+	case strings.TrimSpace(os.Getenv(APIKeyEnv)) != "":
+		return "env"
+	default:
+		return "config"
+	}
+}
+
+// Proxy собирает настройки прокси из плоских полей конфига.
+func (c Config) Proxy() netproxy.Settings {
+	return netproxy.Settings{
+		Mode:     c.ProxyMode,
+		Proto:    c.ProxyProto,
+		Host:     c.ProxyHost,
+		Port:     c.ProxyPort,
+		User:     c.ProxyUser,
+		Password: c.ProxyPassword,
+		NoProxy:  c.NoProxy,
+		URL:      c.ProxyURL,
+	}.Normalize()
+}
+
+// SetProxy раскладывает настройки прокси обратно в плоские поля. Старый
+// ProxyURL при этом очищается: держать адрес в двух местах — значит
+// получить два разных прокси из одного файла.
+func (c *Config) SetProxy(p netproxy.Settings) {
+	p = p.Normalize()
+	c.ProxyMode = p.Mode
+	c.ProxyProto = p.Proto
+	c.ProxyHost = p.Host
+	c.ProxyPort = p.Port
+	c.ProxyUser = p.User
+	c.ProxyPassword = p.Password
+	c.NoProxy = p.NoProxy
+	c.ProxyURL = ""
 }
 
 // HardwareInfo содержит информацию о возможностях системы.
@@ -128,8 +237,10 @@ func Default() Config {
 	}
 
 	return Config{
-		Provider:     ProviderAuto,
-		RemoteModel:  DefaultRemoteModel,
+		Provider: ProviderAuto,
+		// RemoteModel намеренно пуст: дефолт зависит от провайдера
+		// (DefaultModelFor), и зашивать его сюда значило бы тащить Pollinations
+		// в Ollama. Validate подставляет нужный.
 		SearchModel:  DefaultSearchModel,
 		Threads:      hw.CPUCores,
 		CtxSize:      4096,
@@ -143,6 +254,8 @@ func Default() Config {
 		DryRun:       false,
 		ToolsEnabled: true,
 		Mode:         ModeAI,
+		ProxyMode:    netproxy.ModeAuto,
+		ProxyProto:   netproxy.ProtoHTTP,
 	}
 }
 
@@ -195,31 +308,34 @@ func (c *Config) Validate() error {
 	switch c.Provider {
 	case "":
 		c.Provider = ProviderAuto
-	case ProviderLocal, ProviderPollinations, ProviderAuto:
+	case ProviderLocal, ProviderPollinations, ProviderOllama, ProviderAuto:
 	default:
-		return fmt.Errorf("invalid provider %q (expected local, pollinations or auto)", c.Provider)
+		return fmt.Errorf("invalid provider %q (expected local, pollinations, ollama or auto)", c.Provider)
 	}
 
 	c.RemoteModel = strings.TrimSpace(c.RemoteModel)
 	if c.RemoteModel == "" {
-		c.RemoteModel = DefaultRemoteModel
+		c.RemoteModel = DefaultModelFor(c.Provider)
 	}
 	c.SearchModel = strings.TrimSpace(c.SearchModel)
 	if c.SearchModel == "" {
 		c.SearchModel = DefaultSearchModel
 	}
+	c.RemoteAPIKey = strings.TrimSpace(c.RemoteAPIKey)
 	if raw := strings.TrimSpace(c.RemoteBaseURL); raw != "" {
-		u, err := url.Parse(raw)
-		if err != nil {
-			return fmt.Errorf("invalid remote_base_url %q: %w", c.RemoteBaseURL, err)
-		}
-		if u.Scheme != "http" && u.Scheme != "https" {
-			return fmt.Errorf("remote_base_url must be http(s), got %q", c.RemoteBaseURL)
-		}
-		if u.Host == "" {
-			return fmt.Errorf("remote_base_url %q has no host", c.RemoteBaseURL)
+		if err := ValidateRemoteBaseURL(raw); err != nil {
+			return err
 		}
 	}
+
+	// Прокси: пустой режим означает auto, неверный протокол, порт или
+	// список исключений — ошибка. Молча уйти мимо прокси нельзя: запрос
+	// либо не дойдёт вообще, либо уйдёт туда, куда не собирались.
+	proxy := c.Proxy()
+	if err := proxy.Validate(); err != nil {
+		return err
+	}
+	c.SetProxy(proxy)
 
 	if c.Threads < 0 || c.CtxSize < 0 || c.GPULayers < 0 || c.MaxTokens < 0 {
 		return errors.New("threads, ctx_size, gpu_layers and max_tokens must be >= 0")
@@ -238,6 +354,23 @@ func (c *Config) Validate() error {
 		if _, err := regexp.Compile(pat); err != nil {
 			return fmt.Errorf("invalid regex pattern %q: %w", pat, err)
 		}
+	}
+	return nil
+}
+
+// ValidateRemoteBaseURL проверяет адрес удалённого провайдера. Вынесено
+// отдельно, потому что адрес меняется и из флагов, и в экране настроек, а
+// правила должны быть одни и те же.
+func ValidateRemoteBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid remote_base_url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("remote_base_url must be http(s), got %q", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("remote_base_url %q has no host", raw)
 	}
 	return nil
 }
@@ -450,7 +583,6 @@ func detectWindowsRAM() int {
 	// Last resort: return 8GB as default
 	return 8
 }
-
 
 // detectLinuxRAM определяет RAM на Linux.
 func detectLinuxRAM() int {

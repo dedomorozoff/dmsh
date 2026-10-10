@@ -106,6 +106,25 @@ func TestTodoStoreItemsIsACopy(t *testing.T) {
 	}
 }
 
+// Задача хранится одной строкой: переносы внутри неё давали пустые строки
+// в /todo и ломали колонку статусов.
+func TestTodoStoreAddNormalizesToOneLine(t *testing.T) {
+	store := NewTodoStore()
+	item, err := store.Add("  fix\n\n the\n  log  ")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if item.Task != "fix the log" {
+		t.Fatalf("task = %q, want %q", item.Task, "fix the log")
+	}
+	if rows := strings.Split(store.Render(), "\n"); len(rows) != 1 {
+		t.Fatalf("one task must render as one row: %q", store.Render())
+	}
+	if !strings.Contains(store.Render(), "open [1] fix the log") {
+		t.Fatalf("render = %q", store.Render())
+	}
+}
+
 func TestTodoRunnerAddListDoneClear(t *testing.T) {
 	store := NewTodoStore()
 	run := NewTodoRunner(store)

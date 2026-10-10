@@ -3,45 +3,50 @@
 package executor
 
 import (
-	"io"
 	"sync"
 
 	"github.com/creack/pty"
 )
 
-// runTerminal запускает оболочку в псевдотерминале и проксирует ввод-вывод.
-// pty.StartWithSize сам проставит cmd.Stdin/Stdout/Stderr, если они не
-// заданы; ввод и вывод от bubbletea приходят как io.Reader/io.Writer, а не
-// как *os.File, поэтому проброс делается копированием.
-func runTerminal(opts TerminalOpts, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+// startTerminal запускает оболочку в псевдотерминале и отдаёт сессию
+// вызывающему коду: master-конец и есть одновременно ввод и вывод.
+func startTerminal(opts TerminalOpts) (*TerminalSession, error) {
 	cmd := commandForTerminal(opts)
 
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(opts.Size.Cols),
-		Rows: uint16(opts.Size.Rows),
-	})
+	ptmx, err := pty.StartWithSize(cmd, winsize(opts.Size))
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
-	// Копирование в pty (ввод) не ждём: оно блокировано на чтении stdin
-	// до конца программы, а закрыть stdin извне нельзя. Оно завершится
-	// вместе с терминалом пользователя.
-	go func() { _, _ = io.Copy(ptmx, stdin) }()
+	var waitOnce sync.Once
+	var code int
+	var waitErr error
+	return &TerminalSession{
+		rd:     ptmx,
+		wr:     ptmx,
+		closer: ptmx,
+		resizeFn: func(size TerminalSize) error {
+			return pty.Setsize(ptmx, winsize(size))
+		},
+		waitFn: func() (int, error) {
+			waitOnce.Do(func() {
+				waitErr = cmd.Wait()
+				code = exitCode(cmd, waitErr)
+			})
+			return code, waitErr
+		},
+	}, nil
+}
 
-	// Вывод читаем в двух местах сразу: отдельные копии для stdout и stderr
-	// нужны, потому что stderr отдаётся отдельным writer'ом.
-	var out sync.WaitGroup
-	out.Add(2)
-	go func() { defer out.Done(); _, _ = io.Copy(stdout, ptmx) }()
-	go func() { defer out.Done(); _, _ = io.Copy(stderr, ptmx) }()
-
-	waitErr := cmd.Wait()
-
-	// Закрываем pty после выхода программы: читатели получают EOF и
-	// освобождают терминал, который к этому моменту уже отдан оболочке.
-	_ = ptmx.Close()
-	out.Wait()
-
-	return exitCode(cmd, waitErr), nil
+// winsize переводит размер в ячейках в формат pty. Нулевые значения
+// заменяются на минимум: нулевой размер псевдотерминал не принимает.
+func winsize(size TerminalSize) *pty.Winsize {
+	cols, rows := size.Cols, size.Rows
+	if cols < 1 {
+		cols = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
 }

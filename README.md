@@ -4,9 +4,9 @@
 A local LLM (GGUF via `llama.cpp`) is embedded directly into the binary
 through CGO — no HTTP server, no external processes, no cloud.
 
-If no local GGUF is available, dmsh can talk to the free
-[Pollinations](https://pollinations.ai) text API instead (anonymous, no
-token). See [Providers](#providers).
+It can also talk to a local [Ollama](https://ollama.ai) server, or to the
+[Pollinations](https://pollinations.ai) text API. See
+[Providers](#providers).
 
 > Cross-platform: Linux, macOS, Windows.
 
@@ -111,22 +111,135 @@ Inference source is chosen by the `provider` setting:
 |----------|-----------|
 | `auto` (default) | local GGUF if one is found, otherwise Pollinations |
 | `local` | local GGUF only; fails with a hint if none is present |
-| `pollinations` | Pollinations API; local models are ignored |
+| `ollama` | local [Ollama](https://ollama.ai) server over its OpenAI-compatible endpoint; no API key |
+| `pollinations` | Pollinations API; needs an API key, local models are ignored |
 
 ```bash
+dmsh config set provider ollama           # a local Ollama server
+dmsh --provider ollama --remote-model qwen3:8b "list big files"
+dmsh --remote-base-url http://host:8080/v1 "..."   # any OpenAI-compatible endpoint
 dmsh config set provider pollinations     # remote only
 dmsh --provider auto "list big files"     # per-run override
-dmsh --remote-model mistral "..."         # pick another remote model
+dmsh --remote-model openai/gpt-5.4-nano "..."       # any model from the catalog
 dmsh --search-model gemini-search "..."   # model behind the websearch tool
-dmsh --remote-base-url http://host:8080/v1 "..."   # any OpenAI-compatible endpoint
 ```
 
-Pollinations is used anonymously: dmsh never sends API tokens and adds no
-`Authorization` header. With `provider=auto` the fallback happens once, at
-session start, and is reported in the output — a local model that fails to
-load is never silently replaced.
+### Ollama
 
-`/model` (REPL) shows the active provider, model and endpoint.
+`ollama serve` listens on `http://127.0.0.1:11434`; dmsh talks to its
+OpenAI-compatible `/v1` endpoint, so no key is involved and nothing leaves
+the machine. The model defaults to `qwen2.5-coder` — pick another with
+`--remote-model` (the name must match `ollama list`, tags included):
+
+```bash
+ollama pull qwen2.5-coder
+dmsh --provider ollama "find *.go files changed last week"
+```
+
+If the server is not running or the model is not pulled, the error says
+exactly which of the two it is. Tool calling needs a model that supports it
+(`ollama list` shows capabilities).
+
+### Choosing a model
+
+`Ctrl+O` (or `/models` from the palette) opens the model menu. With a
+remote provider it shows that provider's live catalog instead of local
+files:
+
+- the list is fetched from the provider's `/models` route (no key needed —
+  both Pollinations and Ollama serve it openly) and sorted by id;
+- typing filters it (`qwen`, `coder`, `5.4`), `Backspace` edits the filter,
+  `Esc` clears the filter and closes the window;
+- `Enter` switches the session to the chosen model and rebuilds the engine.
+  The choice is session-only — `Ctrl+P` → setup → **apply** writes it to
+  `config.json` (the same rule the local menu follows);
+- if the fetch fails, the error stays on screen: an unreachable Ollama and a
+  missing key look very different.
+
+For Pollinations this is the practical way to pick a model from its catalog
+of several hundred entries without copying names by hand.
+
+### Pollinations
+
+The default endpoint is `https://gen.pollinations.ai/v1`. Model IDs follow
+`publisher/model` (for example `openai/gpt-5.4-nano`); the model catalog is
+at <https://gen.pollinations.ai/models>.
+
+Generation requires an API key — take one at
+<https://enter.pollinations.ai/keys>. dmsh reads it from the
+`POLLINATIONS_API_KEY` environment variable first, and only then from
+`remote_api_key` in `config.json`, so the secret does not have to live on
+disk at all:
+
+```bash
+export POLLINATIONS_API_KEY=sk_...
+dmsh --provider pollinations "list big files"
+```
+
+Without a key the request goes out anonymous and the API answers 401; dmsh
+turns that into a message naming the variable and the page where the key is
+issued. The key itself is never printed — only its source (`dmsh /model`,
+`Ctrl+P` → setup).
+
+With `provider=auto` the fallback happens once, at session start, and is
+reported in the output — a local model that fails to load is never silently
+replaced.
+
+`/model` (REPL) shows the active provider, model and endpoint. In the TUI,
+`Ctrl+P` → **setup** opens the same choice as a window: provider (`auto`,
+`local`, `ollama`, `pollinations`), remote model, local GGUF, endpoint and
+API key. `←/→` switches the provider, `Enter` edits a field, **apply**
+rebuilds the engine for this session and writes `config.json`; a failed
+switch keeps the engine that was already working. The status line shows
+`proxy:on` / `proxy:off`, so it is visible before the first connection error
+rather than after it.
+
+## Proxy
+
+Every outgoing request — LLM API, `websearch`, GGUF download — goes through
+one proxy setting, chosen by `proxy_mode`:
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` (default) | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` / `NO_PROXY` from the environment, direct connection if unset |
+| `off` | always direct, environment variables ignored |
+| `custom` | the address from `proxy_proto` + `proxy_host` + `proxy_port` + `proxy_user` + `proxy_password` |
+
+`proxy_proto` is `http`, `https`, `socks5` or `socks5h` (`socks5h` resolves
+the host name at the proxy, so the local DNS is not needed at all). The port
+is left to the protocol default when `proxy_port` is `0`.
+
+`no_proxy` lists hosts that bypass the proxy, comma-separated: `localhost`,
+`127.0.0.1`, `api.example.com:8443`, `.corp.example` (host and subdomains),
+`10.0.0.0/8`.
+
+```bash
+# whole address at once — the same fields, filled from one string
+dmsh --proxy socks5://127.0.0.1:1080 "list big files"
+dmsh --proxy http://user:pass@proxy.corp:3128 "..."
+
+# or field by field
+dmsh --proxy-mode custom --proxy-proto socks5 --proxy-host 10.0.0.1 \
+      --proxy-port 1080 --proxy-user dmsh --proxy-password secret "..."
+
+dmsh config set proxy-host 10.0.0.1
+dmsh config set proxy-port 1080
+dmsh config set proxy-proto socks5
+dmsh config set proxy-mode custom
+```
+
+In the TUI press `Ctrl+P` and pick **settings: proxy and endpoint**. The
+window lists one field per row — mode, protocol, host, port, login,
+password, bypass list, endpoint — so a typo in the protocol or the port is
+visible immediately. `←/→` switches the mode and the protocol, `Enter` edits
+a field, **test connection** sends one real request and reports the route,
+and **save** applies the settings to the running session and writes
+`config.json`. Edits stay local until you save, and the window always shows
+whether the next request goes direct or through which proxy. The password is
+shown as a mask everywhere except while typing it.
+
+The old single `proxy_url` setting is still accepted: it is expanded into
+the fields on load and replaced by them on the next save.
 
 ## Tools (function calling)
 
@@ -156,7 +269,7 @@ Notes:
   already spent on the prompt, so `ask` is not offered at all.
 - `websearch` issues a second request to the same endpoint with a search
   model (`gemini-search` by default, `--search-model` to change). It is only
-  available for the remote provider.
+  available for the `pollinations` provider — that model is hosted there.
 
 Disable all tools with `--no-tools` or `dmsh config set tools false`.
 
@@ -169,13 +282,13 @@ with scrollback, live streaming and a status line. Three modes:
   after the safety check; anything non-trivial asks for confirmation.
 - **Help** — shows command + explanation, you run it yourself. The
   `run_command` tool is not even advertised to the model in this mode.
-- **Terminal** — a real shell session in a pseudo-terminal. Press Enter on
-  an empty line (or run `/shell`) and dmsh hands the whole terminal over to
-  your shell: colours, interactive programs and window size all work. Exit
-  the shell to return.
+- **Terminal** — a real shell session in a pseudo-terminal, drawn **inside
+  the app window**. Colours, interactive programs and window size all work,
+  and dmsh keeps its status line: `Shift+Tab` closes the shell and returns to
+  the prompt.
 
 Switch with `Shift+Tab` (cycles ai → help → terminal), the command palette
-on `Ctrl+P`, or `/mode ai|help|shell`.
+on `Ctrl+P`, `/mode` (opens the mode list) or `/mode ai|help|shell`.
 
 ### Slash commands
 
@@ -183,6 +296,9 @@ on `Ctrl+P`, or `/mode ai|help|shell`.
 |---------|-------------|
 | `/help` | full help |
 | `/model` | show the model currently in use |
+| `/models` | model menu: local .gguf files (install / switch) or, with a remote provider, its live catalog |
+| `/setup` | how dmsh connects to the LLM: provider (auto / local / pollinations), remote model, local GGUF, endpoint — pick one and it rebuilds the engine and writes `config.json` |
+| `/settings`, `/proxy` | network settings window: proxy mode, protocol, host, port, login, password, bypass list, endpoint, connection test |
 | `/stats` | session statistics |
 | `/export` | copy last command to clipboard or `/export last > file` |
 | `/alias` | list aliases; `/alias name="request"`; `/alias -d name` |
@@ -190,9 +306,9 @@ on `Ctrl+P`, or `/mode ai|help|shell`.
 | `/cd [path]` | change directory |
 | `/pwd` | show current directory |
 | `/clear` | clear screen |
-| `/shell` | open a terminal session (also switches to terminal mode) |
+| `/shell` | open a shell in this window (also switches to terminal mode) |
 | `/bind keys` | show keybindings |
-| `/mode` | show/switch mode (`/mode ai|help|shell`) |
+| `/mode` | open the mode list and pick one (`/mode ai|help|shell`) |
 | `!command` | execute command directly |
 | `/exit`, `/quit` | exit |
 
@@ -204,7 +320,7 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | Key | Action |
 |-----|--------|
 | `F1` / `/help` | show help (works from any screen) |
-| `Ctrl+P` | command palette: every command and mode, filter by typing |
+| `Ctrl+P` | command palette as a modal window: every command, mode, the setup and the settings screens, filter by typing |
 | `Ctrl+Q` | exit |
 | `Esc` / `Ctrl+C` | cancel / stop streaming |
 | `Ctrl+A/E/U/K` | start/end/delete-to-start/delete-to-end of line |
@@ -213,12 +329,12 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `Alt+B/F/D` | move / delete by word |
 | `Ctrl+W` | delete word back |
 | `Ctrl+L` | clear screen |
-| `Ctrl+O` | model menu (install / switch model) |
+| `Ctrl+O` | model menu: local .gguf files (install / switch) or, with a remote provider, its live model catalog |
 | `Tab` | complete slash command |
 | `Shift+Tab` | cycle modes: ai → help → terminal |
 | `↑/↓` | previous / next command from history (persisted across sessions) |
 | `PgUp/PgDn` | scroll output |
-| `Enter` (empty line, terminal mode) | hand the terminal over to a real shell |
+| any key (terminal mode) | goes to the shell; `Shift+Tab` returns to the prompt |
 
 ## Other commands
 
@@ -231,7 +347,9 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `dmsh audit` | audit log of executed commands (add `--json` for raw lines) |
 
 Common flags (all subcommands): `--model`, `--provider`, `--remote-model`,
-`--remote-base-url`, `--no-tools`, `--threads`, `--ctx-size`,
+`--remote-base-url`, `--no-tools`, `--proxy-mode`, `--proxy`,
+`--proxy-proto`, `--proxy-host`, `--proxy-port`, `--proxy-user`,
+`--proxy-password`, `--no-proxy`, `--threads`, `--ctx-size`,
 `--gpu-layers`, `--max-tokens`, `--temperature`, `--top-p`, `--shell`,
 `--dry-run`, `--preview`, `--yes`.
 
@@ -298,13 +416,15 @@ See `make help` for flags and details.
 ```
 cmd/dmsh/               CLI entry point
 internal/cli/           cobra commands, Bubble Tea TUI
-internal/llm/           CGO wrapper over llama.cpp
+internal/llm/           llama.cpp (CGO) + OpenAI-compatible remote engines
 internal/prompt/        system prompt + JSON contract
 internal/policy/        safety gate (denylist + risk scoring)
-internal/executor/      shell command execution
+internal/executor/      shell command execution + pseudo-terminal sessions
+internal/vt/            minimal terminal screen for the embedded shell
 internal/feedback/      post-execution analysis of stdout/stderr/exit code
 internal/config/        config loading/saving, hardware detection
 internal/model/         model download/management
+internal/netproxy/      one proxy setting for every outgoing request
 third_party/llama.cpp/  pinned llama.cpp submodule
 ```
 

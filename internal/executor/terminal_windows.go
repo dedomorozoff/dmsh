@@ -5,9 +5,9 @@ package executor
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/UserExistsError/conpty"
 )
@@ -17,58 +17,46 @@ import (
 // всех платформах.
 var ErrConPTYUnavailable = fmt.Errorf("%w: ConPTY is not available (Windows 10 1809 or newer required)", ErrNoTerminal)
 
-// runTerminal запускает оболочку в псевдо-консоли Windows. В отличие от
-// unix-версии потоки не разделяются: ConPTY отдаёт весь вывод программы
-// одним каналом, поэтому stderr получает только диагностику самого dmsh.
-func runTerminal(opts TerminalOpts, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+// startTerminal запускает оболочку в псевдо-консоли Windows и отдаёт сессию
+// вызывающему коду. В отличие от unix-версии потоки не разделяются: ConPTY
+// отдаёт весь вывод программы одним каналом.
+func startTerminal(opts TerminalOpts) (*TerminalSession, error) {
 	if !conpty.IsConPtyAvailable() {
-		return -1, ErrConPTYUnavailable
+		return nil, ErrConPTYUnavailable
 	}
 
 	cpty, err := conpty.Start(
 		commandLine(opts),
-		conpty.ConPtyDimensions(opts.Size.Cols, opts.Size.Rows),
+		conpty.ConPtyDimensions(max(1, opts.Size.Cols), max(1, opts.Size.Rows)),
 		conpty.ConPtyWorkDir(opts.Dir),
 		conpty.ConPtyEnv(environ(opts)),
 	)
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
-	// Close вызывается ровно один раз, ниже: двойной Close закрывает
-	// win32-хэндлы повторно и ломает кучу процесса. Поэтому defer здесь
-	// только на случай паники до успешного старта копирования.
-	closed := false
-	defer func() {
-		if !closed {
-			_ = cpty.Close()
-		}
-	}()
 
-	// Ввод не ждём: он блокирован на чтении stdin до конца программы, а
-	// закрыть stdin извне нельзя.
-	go func() { _, _ = io.Copy(cpty, stdin) }()
-
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(stdout, cpty)
-		close(done)
-	}()
-
-	// Wait возвращает STILL_ACTIVE и ошибку, если контекст отменён; в
-	// нашем случае контекст живёт до конца программы.
-	exit, waitErr := cpty.Wait(context.Background())
-
-	// После выхода программы чтение из ConPTY не даёт EOF: дескрипторы
-	// псевдо-консоли ещё открыты. Закрываем их, иначе копирование вывода
-	// не завершится и вызов повиснет.
-	_ = cpty.Close()
-	closed = true
-	<-done
-
-	if waitErr != nil {
-		return -1, waitErr
-	}
-	return int(exit), nil
+	var waitOnce sync.Once
+	var code int
+	var waitErr error
+	return &TerminalSession{
+		rd:     cpty,
+		wr:     cpty,
+		closer: cpty,
+		resizeFn: func(size TerminalSize) error {
+			return cpty.Resize(max(1, size.Cols), max(1, size.Rows))
+		},
+		waitFn: func() (int, error) {
+			waitOnce.Do(func() {
+				exit, err := cpty.Wait(context.Background())
+				if err != nil {
+					waitErr, code = err, -1
+					return
+				}
+				code = int(exit)
+			})
+			return code, waitErr
+		},
+	}, nil
 }
 
 // commandLine собирает строку запуска для CreateProcess: ConPTY принимает

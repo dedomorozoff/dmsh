@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -63,10 +64,37 @@ func (s *session) chatWithTools(
 		msgs = append(msgs, msg)
 		for _, call := range msg.ToolCalls {
 			fmt.Fprintf(out, "\n%s[tool]%s %s%s%s\n", cyan, reset, cyan, call.Name, reset)
-			msgs = append(msgs, llm.NewToolResult(call, s.runToolCall(ctx, call, out)))
+			result := s.runToolCall(ctx, call, out)
+			// Список todo — состояние пользователя: без этой строки он видит
+			// только пустую строку и метку [tool], а результат уходит одной
+			// модели.
+			if call.Name == tools.NameTodo {
+				if line := todoResultLine(result); line != "" {
+					fmt.Fprintf(out, "  %s%s%s\n", gray, line, reset)
+				}
+			}
+			msgs = append(msgs, llm.NewToolResult(call, result))
 		}
 	}
 	return fmt.Errorf("tool call limit reached after %d steps", maxToolSteps)
+}
+
+// todoResultLine возвращает первую строку результата todo: короткое
+// подтверждение («added [1] …»), первую строку списка или текст ошибки —
+// молчаливый отказ хуже любого текста.
+func todoResultLine(result string) string {
+	var res tools.Result
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(res.Content)
+	if text == "" {
+		text = strings.TrimSpace(res.Error)
+	}
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	return text
 }
 
 // chatStep делает один запрос к модели и параллельно печатает приходящие
@@ -194,9 +222,11 @@ func (s *session) runWebSearchTool(ctx context.Context, call llm.ToolCall) strin
 		return tools.EncodeResult(tools.Result{OK: false, Error: "query is required"})
 	}
 	if s.provider != config.ProviderPollinations {
+		// Поисковая модель живёт только у Pollinations: у Ollama её нет, а
+		// локальный GGUF не выходит в сеть.
 		return tools.EncodeResult(tools.Result{
 			OK:    false,
-			Error: "websearch is only available for the remote provider; answer from local sources instead",
+			Error: "websearch needs the Pollinations provider; answer from local sources instead",
 		})
 	}
 	eng, err := s.searchEngineFor()
@@ -247,6 +277,7 @@ func (s *session) searchEngineFor() (llm.Engine, error) {
 		Provider:      llm.ProviderPollinations,
 		RemoteModel:   s.searchModel(),
 		RemoteBaseURL: s.cfg.RemoteBaseURL,
+		Proxy:         s.cfg.Proxy(),
 		Timeout:       searchTimeout,
 	})
 	if err != nil {

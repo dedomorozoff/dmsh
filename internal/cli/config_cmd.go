@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,28 @@ func newConfigCmd() *cobra.Command {
 			if cfg.RemoteBaseURL != "" {
 				fmt.Fprintf(out, "  %-20s %v\n", "remote_base_url:", cfg.RemoteBaseURL)
 			}
+			if cfg.APIKeySource() != "" {
+				fmt.Fprintf(out, "  %-20s %s\n", "remote_api_key:", cfg.MaskedAPIKey())
+			}
 			fmt.Fprintf(out, "  %-20s %v\n", "tools_enabled:", cfg.ToolsEnabled)
+			fmt.Fprintf(out, "  %-20s %v\n", "proxy_mode:", cfg.ProxyMode)
+			if cfg.ProxyHost != "" {
+				fmt.Fprintf(out, "  %-20s %v\n", "proxy_proto:", cfg.Proxy().Proto)
+				fmt.Fprintf(out, "  %-20s %v\n", "proxy_host:", cfg.ProxyHost)
+				if cfg.ProxyPort > 0 {
+					fmt.Fprintf(out, "  %-20s %v\n", "proxy_port:", cfg.ProxyPort)
+				}
+				if cfg.ProxyUser != "" {
+					fmt.Fprintf(out, "  %-20s %v\n", "proxy_user:", cfg.ProxyUser)
+					fmt.Fprintf(out, "  %-20s %v\n", "proxy_password:", netproxy.Settings{Password: cfg.ProxyPassword}.MaskedPassword())
+				}
+			}
+			if cfg.NoProxy != "" {
+				fmt.Fprintf(out, "  %-20s %v\n", "no_proxy:", cfg.NoProxy)
+			}
+			if eff, err := cfg.Proxy().Effective(remoteEndpoint(cfg.Provider, cfg.RemoteBaseURL)); err == nil {
+				fmt.Fprintf(out, "  %-20s %s\n", "proxy in effect:", proxyRouteLabel(eff))
+			}
 			fmt.Fprintf(out, "  %-20s %v\n", "model_path:", cfg.ModelPath)
 			fmt.Fprintf(out, "  %-20s %v\n", "default_model:", cfg.DefaultModel)
 			fmt.Fprintf(out, "  %-20s %v\n", "threads:", cfg.Threads)
@@ -85,15 +107,49 @@ func newConfigCmd() *cobra.Command {
 			case "provider":
 				p := config.Provider(strings.ToLower(val))
 				if !p.Valid() {
-					return fmt.Errorf("invalid provider %q, allowed: local, pollinations, auto", val)
+					return fmt.Errorf("invalid provider %q, allowed: local, pollinations, ollama, auto", val)
 				}
 				cfg.Provider = p
 			case "remotemodel":
 				cfg.RemoteModel = val
+			case "apikey", "remoteapikey":
+				cfg.RemoteAPIKey = val
 			case "searchmodel":
 				cfg.SearchModel = val
 			case "remotebaseurl":
 				cfg.RemoteBaseURL = val
+			case "proxymode":
+				m, err := netproxy.ParseMode(val)
+				if err != nil {
+					return err
+				}
+				cfg.ProxyMode = m
+			case "proxy", "proxyaddress":
+				p := cfg.Proxy()
+				if err := p.ApplyURL(val); err != nil {
+					return err
+				}
+				cfg.SetProxy(p)
+			case "proxyproto":
+				proto := strings.ToLower(val)
+				if !netproxy.ValidProto(proto) {
+					return fmt.Errorf("invalid proxy protocol %q, allowed: http, https, socks5, socks5h", val)
+				}
+				cfg.ProxyProto = proto
+			case "proxyhost":
+				cfg.ProxyHost = val
+			case "proxyport":
+				v, err := strconv.Atoi(val)
+				if err != nil {
+					return fmt.Errorf("invalid int value for proxy_port: %w", err)
+				}
+				cfg.ProxyPort = v
+			case "proxyuser", "proxylogin":
+				cfg.ProxyUser = val
+			case "proxypassword", "proxypass":
+				cfg.ProxyPassword = val
+			case "noproxy", "noproxies":
+				cfg.NoProxy = val
 			case "tools", "toolsenabled":
 				v, err := strconv.ParseBool(val)
 				if err != nil {
@@ -171,6 +227,13 @@ func newConfigCmd() *cobra.Command {
 				}
 			default:
 				return fmt.Errorf("unknown configuration key %q", args[0])
+			}
+
+			// Не даём записать конфиг, который dmsh не сможет применить:
+			// битый адрес прокси иначе обнаружился бы первым запросом к
+			// модели, а не здесь.
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid configuration: %w", err)
 			}
 
 			if err := config.Save(cfg); err != nil {

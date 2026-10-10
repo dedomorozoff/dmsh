@@ -14,6 +14,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// listLocalModels печатает рекомендуемые и скачанные модели: общий список
+// для `dmsh model list` и для /models вне TUI.
+func listLocalModels(out io.Writer) {
+	d := model.New("")
+
+	fmt.Fprintln(out, "=== Recommended ===")
+	for i, m := range model.RecommendedModels {
+		status := "[ ]"
+		if d.Exists(m.Name) {
+			status = "[*]"
+		}
+		fmt.Fprintf(out, "%d. %s %s (%d MB)\n    %s\n    %s\n",
+			i+1, status, m.Name, m.SizeMB, m.Description, m.URL)
+	}
+
+	all, err := d.ListAllModels()
+	if err != nil {
+		fmt.Fprintf(out, "scan error: %v\n", err)
+	}
+	if len(all) > 0 {
+		fmt.Fprintln(out, "\n=== Downloaded ===")
+		for _, m := range all {
+			size := ""
+			if fi, err := os.Stat(d.ModelPath(m.Name)); err == nil {
+				size = fmt.Sprintf(" (%d MB)", fi.Size()/1024/1024)
+			}
+			fmt.Fprintf(out, "  %s%s\n", m.Name, size)
+		}
+	}
+}
+
 func newModelCmd(rf *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model",
@@ -31,33 +62,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List available models",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			d := model.New("")
-			out := cmd.OutOrStdout()
-
-			fmt.Fprintln(out, "=== Recommended ===")
-			for i, m := range model.RecommendedModels {
-				status := "[ ]"
-				if d.Exists(m.Name) {
-					status = "[*]"
-				}
-				fmt.Fprintf(out, "%d. %s %s (%d MB)\n    %s\n    %s\n",
-					i+1, status, m.Name, m.SizeMB, m.Description, m.URL)
-			}
-
-			all, err := d.ListAllModels()
-			if err != nil {
-				fmt.Fprintf(out, "scan error: %v\n", err)
-			}
-			if len(all) > 0 {
-				fmt.Fprintln(out, "\n=== Downloaded ===")
-				for _, m := range all {
-					size := ""
-					if fi, err := os.Stat(d.ModelPath(m.Name)); err == nil {
-						size = fmt.Sprintf(" (%d MB)", fi.Size()/1024/1024)
-					}
-					fmt.Fprintf(out, "  %s%s\n", m.Name, size)
-				}
-			}
+			listLocalModels(cmd.OutOrStdout())
 			return nil
 		},
 	})

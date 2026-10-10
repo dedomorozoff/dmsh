@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 )
 
 type Downloader struct {
@@ -22,12 +25,46 @@ func New(modelDir string) *Downloader {
 	}
 	return &Downloader{
 		modelDir: modelDir,
-		client: &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		client:   newHTTPClient(),
 	}
+}
+
+var (
+	downloadMu   sync.RWMutex
+	downloadHTTP *http.Client
+)
+
+// noRedirect: скачивание GGUF разбирает редирект на CDN вручную (с него
+// берётся финальный URL), поэтому автоследование редиректов выключено.
+func noRedirect(req *http.Request, via []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// SetProxy задаёт прокси для скачивания моделей. Вызывается один раз при
+// старте CLI: файлы весят гигабайты, и качать их мимо настроенного прокси
+// нельзя. Ошибка возвращается сразу, а не через несколько минут загрузки.
+func SetProxy(p netproxy.Settings) error {
+	client, err := p.Client(0)
+	if err != nil {
+		return err
+	}
+	client.CheckRedirect = noRedirect
+	downloadMu.Lock()
+	defer downloadMu.Unlock()
+	downloadHTTP = client
+	return nil
+}
+
+// newHTTPClient возвращает общий клиент скачивания. Таймаут запроса
+// остаётся нулевым намеренно: многогигабайтная загрузка с паузами на
+// стороне CDN иначе обрывалась бы на середине.
+func newHTTPClient() *http.Client {
+	downloadMu.RLock()
+	defer downloadMu.RUnlock()
+	if downloadHTTP != nil {
+		return downloadHTTP
+	}
+	return &http.Client{CheckRedirect: noRedirect}
 }
 
 func defaultModelDir() string {

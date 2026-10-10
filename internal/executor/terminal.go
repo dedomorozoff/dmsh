@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // ErrNoTerminal — PTY на этой платформе недоступен. Вызывающий код должен
@@ -42,10 +43,84 @@ func TerminalOptsFromShell(shell string, size TerminalSize) TerminalOpts {
 // stdout — терминал пользователя; программа сама решает, что печатать.
 // Возвращает код завершения.
 func RunTerminal(opts TerminalOpts, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	if strings.TrimSpace(opts.Shell) == "" {
-		return -1, ErrNoTerminal
+	sess, err := StartTerminal(opts)
+	if err != nil {
+		return -1, err
 	}
-	return runTerminal(opts, stdin, stdout, stderr)
+	// Ввод не ждём: он блокирован на чтении stdin до конца программы, а
+	// закрыть stdin извне нельзя.
+	go func() { _, _ = io.Copy(sess, stdin) }()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(stdout, sess)
+		close(done)
+	}()
+
+	code, err := sess.Wait()
+	_ = sess.Close()
+	<-done
+	return code, err
+}
+
+// TerminalSession — оболочка в псевдотерминале, которой управляет вызывающий
+// код сам: ввод пишется в Write, вывод читается из Read, терминал
+// пользователя при этом не отдаётся. Это то, что нужно встроенному в окно
+// режиму терминала.
+//
+// Close вызывается не больше одного раза: у ConPTY повторный Close
+// закрывает уже закрытые win32-хэндлы и ломает кучу процесса. Поэтому
+// сессия считает закрытия сама и повторный вызов безопасен.
+type TerminalSession struct {
+	rd        io.Reader
+	wr        io.Writer
+	closer    io.Closer
+	resizeFn  func(TerminalSize) error
+	waitFn    func() (int, error)
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// StartTerminal запускает интерактивную оболочку в псевдотерминале.
+func StartTerminal(opts TerminalOpts) (*TerminalSession, error) {
+	if strings.TrimSpace(opts.Shell) == "" {
+		return nil, ErrNoTerminal
+	}
+	return startTerminal(opts)
+}
+
+// Read читает вывод оболочки. Возвращает io.EOF или ошибку, когда псевдо-
+// терминал закрыт — вызывающий код на этом просто останавливает чтение.
+func (s *TerminalSession) Read(p []byte) (int, error) { return s.rd.Read(p) }
+
+// Write отправляет ввод оболочке.
+func (s *TerminalSession) Write(p []byte) (int, error) { return s.wr.Write(p) }
+
+// Resize меняет размер псевдотерминала: программы, которым он нужен
+// ( less, top, редакторы), перерисовываются по этому сигналу.
+func (s *TerminalSession) Resize(size TerminalSize) error {
+	if s.resizeFn == nil {
+		return nil
+	}
+	if size.Cols < 1 || size.Rows < 1 {
+		return nil
+	}
+	return s.resizeFn(size)
+}
+
+// Wait блокируется до выхода оболочки и возвращает её код завершения.
+// Повторный вызов возвращает тот же результат: закрывать процесс второй раз
+// нельзя.
+func (s *TerminalSession) Wait() (int, error) { return s.waitFn() }
+
+// Close завершает псевдотерминал и убивает оболочку. Идемпотентен.
+func (s *TerminalSession) Close() error {
+	s.closeOnce.Do(func() {
+		if s.closer != nil {
+			s.closeErr = s.closer.Close()
+		}
+	})
+	return s.closeErr
 }
 
 // shellInteractiveArgs возвращает аргументы интерактивного запуска.

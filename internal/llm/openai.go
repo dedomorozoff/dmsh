@@ -13,9 +13,10 @@ import (
 	"time"
 )
 
-// Значения по умолчанию для удалённого провайдера.
+// Значения по умолчанию для удалённых провайдеров.
 const (
-	DefaultPollinationsBaseURL = "https://text.pollinations.ai/openai"
+	// DefaultPollinationsBaseURL — OpenAI-совместимый endpoint Pollinations.
+	DefaultPollinationsBaseURL = "https://gen.pollinations.ai/v1"
 	DefaultPollinationsModel   = "openai"
 	// DefaultRemoteTimeout — потолок одного запроса к удалённому API.
 	DefaultRemoteTimeout = 180 * time.Second
@@ -27,34 +28,66 @@ const (
 	maxStreamLine = 4 << 20
 )
 
-// pollinationsEngine работает через OpenAI-совместимый endpoint Pollinations.
-// Авторизация не используется: сервис доступен анонимно.
-type pollinationsEngine struct {
+// openaiEngine работает через любой OpenAI-совместимый chat/completions:
+// и Pollinations, и Ollama говорят на этом диалекте. Различаются они
+// только адресом, моделью по умолчанию и подсказками в ошибках.
+type openaiEngine struct {
 	baseURL string
 	model   string
-	client  *http.Client
+	apiKey  string
+	// name попадает в текст ошибок: «ollama: не удалось подключиться» и
+	// «pollinations: HTTP 402» читаются по-разному.
+	name   string
+	client *http.Client
 }
 
-// NewPollinations создаёт удалённый движок. Ошибок до первого запроса не
-// возвращает: сетевой доступ проверяется при Generate/Stream/Chat.
+// NewPollinations создаёт удалённый движок. Соединение не проверяется до
+// первого запроса: сеть бывает включена позже, а провайдер должен ещё иметь
+// ключ (см. Params.APIKey).
 func NewPollinations(p Params) (Engine, error) {
+	return newOpenAIEngine(remoteProviderPollinations, DefaultPollinationsBaseURL, DefaultPollinationsModel, p)
+}
+
+func newOpenAIEngine(name, defaultBase, defaultModel string, p Params) (Engine, error) {
 	base := strings.TrimSpace(p.RemoteBaseURL)
 	if base == "" {
-		base = DefaultPollinationsBaseURL
+		base = defaultBase
 	}
 	model := strings.TrimSpace(p.RemoteModel)
 	if model == "" {
-		model = DefaultPollinationsModel
+		model = defaultModel
 	}
 	timeout := p.Timeout
 	if timeout <= 0 {
 		timeout = DefaultRemoteTimeout
 	}
-	return &pollinationsEngine{
+	client, err := p.Proxy.Client(timeout)
+	if err != nil {
+		return nil, fmt.Errorf("llm: proxy: %w", err)
+	}
+	return &openaiEngine{
 		baseURL: strings.TrimRight(base, "/"),
 		model:   model,
-		client:  &http.Client{Timeout: timeout},
+		apiKey:  strings.TrimSpace(p.APIKey),
+		name:    name,
+		client:  client,
 	}, nil
+}
+
+// chatURL — адрес самого запроса. Провайдеры задают базу так же, как это
+// делает любой OpenAI SDK (https://gen.pollinations.ai/v1), а маршрут
+// добавляется здесь. Уже готовый адрес не дополняется: старые настройки с
+// полным endpoint'ом должны продолжать работать.
+func chatURL(base string) string {
+	return routeURL(base, "/chat/completions")
+}
+
+// routeURL приписывает маршрут к базе. База, которая уже указывает на
+// /chat/completions, приводится к общему виду, иначе маршрут удвоился бы.
+func routeURL(base, route string) string {
+	b := strings.TrimRight(base, "/")
+	b = strings.TrimSuffix(b, "/chat/completions")
+	return b + route
 }
 
 // chatBody — тело запроса к OpenAI-совместимому API.
@@ -108,21 +141,24 @@ type streamChunk struct {
 	} `json:"error"`
 }
 
-func (e *pollinationsEngine) do(ctx context.Context, body chatBody) (*http.Response, error) {
+func (e *openaiEngine) do(ctx context.Context, body chatBody) (*http.Response, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("llm: marshal request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL(e.baseURL), bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("llm: new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if e.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("llm: pollinations request failed: %w", err)
+		return nil, fmt.Errorf("llm: %s request to %s failed: %w%s", e.name, e.baseURL, err, transportHint(e.name))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer func() { _ = resp.Body.Close() }()
@@ -131,10 +167,10 @@ func (e *pollinationsEngine) do(ctx context.Context, body chatBody) (*http.Respo
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
 		}
-		if hint := remoteErrorHint(resp.StatusCode); hint != "" {
-			return nil, fmt.Errorf("llm: pollinations HTTP %d: %w (%s)", resp.StatusCode, errRemote, hint)
+		if hint := remoteErrorHint(e.name, resp.StatusCode); hint != "" {
+			return nil, fmt.Errorf("llm: %s HTTP %d: %w (%s)", e.name, resp.StatusCode, errRemote, hint)
 		}
-		return nil, fmt.Errorf("llm: pollinations HTTP %d: %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("llm: %s HTTP %d: %s", e.name, resp.StatusCode, msg)
 	}
 	return resp, nil
 }
@@ -143,21 +179,41 @@ func (e *pollinationsEngine) do(ctx context.Context, body chatBody) (*http.Respo
 // могла отличить её от ошибок разбора ответа.
 var errRemote = errors.New("remote provider request failed")
 
-// remoteErrorHint переводит частые ответы Pollinations в actionable текст:
-// анонимный доступ допускает один запрос за раз, поэтому чаще всего
-// 429 означает «слишком быстро», а не «сломанный запрос».
-func remoteErrorHint(code int) string {
+// transportHint объясняет, что делать, когда до сервера не дошли. У Ollama
+// это почти всегда «сервер не запущен», и без подсказки ошибка выглядит как
+// непонятный отказ соединения.
+func transportHint(name string) string {
+	if name != remoteProviderOllama {
+		return ""
+	}
+	return "\n  hint: is ollama running? start it with `ollama serve` (default http://127.0.0.1:11434)"
+}
+
+// remoteErrorHint переводит частые ответы провайдера в actionable текст.
+// У Pollinations ключ обязателен для генерации, у Ollama — модель должна быть
+// скачана заранее.
+func remoteErrorHint(name string, code int) string {
+	if name == remoteProviderOllama {
+		if code == http.StatusNotFound {
+			return "model not found — pull it first: ollama pull <model>"
+		}
+		return ""
+	}
 	switch code {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "the provider needs an API key — set POLLINATIONS_API_KEY (get one at https://enter.pollinations.ai/keys)"
+	case http.StatusPaymentRequired:
+		return "out of Pollen — top up at https://enter.pollinations.ai/pollen or pick another model with --remote-model"
 	case http.StatusTooManyRequests:
-		return "anonymous access allows one request at a time — wait ~15s and retry, or use --remote-base-url with your own endpoint"
-	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
-		return "the model requires a token; dmsh does not send tokens — use --remote-base-url with your own endpoint or pick a free model with --remote-model"
+		return "rate limited — wait a moment, or lower --max-tokens"
+	case http.StatusNotFound:
+		return "unknown model or endpoint — see the catalog at https://gen.pollinations.ai/models"
 	default:
 		return ""
 	}
 }
 
-func (e *pollinationsEngine) singleTurnBody(systemPrompt, userPrompt string, opts SamplingOptions) chatBody {
+func (e *openaiEngine) singleTurnBody(systemPrompt, userPrompt string, opts SamplingOptions) chatBody {
 	var messages []Message
 	if strings.TrimSpace(systemPrompt) != "" {
 		messages = append(messages, Message{Role: RoleSystem, Content: systemPrompt})
@@ -175,7 +231,7 @@ func (e *pollinationsEngine) singleTurnBody(systemPrompt, userPrompt string, opt
 }
 
 // Generate выполняет один запрос без стриминга.
-func (e *pollinationsEngine) Generate(ctx context.Context, systemPrompt, userPrompt string, opts SamplingOptions) (string, error) {
+func (e *openaiEngine) Generate(ctx context.Context, systemPrompt, userPrompt string, opts SamplingOptions) (string, error) {
 	resp, err := e.do(ctx, e.singleTurnBody(systemPrompt, userPrompt, opts))
 	if err != nil {
 		return "", err
@@ -190,7 +246,7 @@ func (e *pollinationsEngine) Generate(ctx context.Context, systemPrompt, userPro
 }
 
 // Stream выполняет запрос и отдаёт текст ответа по кускам.
-func (e *pollinationsEngine) Stream(ctx context.Context, systemPrompt, userPrompt string, opts SamplingOptions, out chan<- string) error {
+func (e *openaiEngine) Stream(ctx context.Context, systemPrompt, userPrompt string, opts SamplingOptions, out chan<- string) error {
 	defer close(out)
 
 	body := e.singleTurnBody(systemPrompt, userPrompt, opts)
@@ -230,7 +286,7 @@ func (e *pollinationsEngine) Stream(ctx context.Context, systemPrompt, userPromp
 // Chat выполняет один заход диалога с необязательными инструментами.
 // Если в запросе задан Deltas, ответ приходит потоком по кускам текста,
 // иначе одним сообщением.
-func (e *pollinationsEngine) Chat(ctx context.Context, req ChatRequest) (Message, error) {
+func (e *openaiEngine) Chat(ctx context.Context, req ChatRequest) (Message, error) {
 	if len(req.Messages) == 0 {
 		return Message{}, fmt.Errorf("llm: empty chat request")
 	}
@@ -285,18 +341,20 @@ func (e *pollinationsEngine) Chat(ctx context.Context, req ChatRequest) (Message
 	}
 }
 
-func (e *pollinationsEngine) Close() error { return nil }
+func (e *openaiEngine) Close() error { return nil }
 
+// decodeChatResponse разбирает тело ответа chat/completions. Провайдер в
+// тексте ошибки не нужен: он уже назван в do().
 func decodeChatResponse(body io.Reader) (Message, error) {
 	var parsed chatResponse
 	if err := json.NewDecoder(body).Decode(&parsed); err != nil {
-		return Message{}, fmt.Errorf("llm: decode pollinations response: %w", err)
+		return Message{}, fmt.Errorf("llm: decode response: %w", err)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return Message{}, fmt.Errorf("llm: pollinations error: %s", parsed.Error.Message)
+		return Message{}, fmt.Errorf("llm: provider error: %s", parsed.Error.Message)
 	}
 	if len(parsed.Choices) == 0 {
-		return Message{}, fmt.Errorf("llm: pollinations returned no choices")
+		return Message{}, errors.New("llm: provider returned no choices")
 	}
 	msg := parsed.Choices[0].Message
 	if msg.Role == "" {

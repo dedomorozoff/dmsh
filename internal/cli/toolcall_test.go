@@ -430,8 +430,20 @@ func TestWebSearchToolRefusesLocalProvider(t *testing.T) {
 	s.provider = config.ProviderLocal
 	res := decodeToolResult(t, s.runToolCall(context.Background(),
 		llm.ToolCall{Name: tools.NameWebSearch, Arguments: `{"query":"news"}`}, io.Discard))
-	if res.OK || !strings.Contains(res.Error, "remote provider") {
-		t.Fatalf("result = %+v, want refusal for the local provider", res)
+	if res.OK || !strings.Contains(res.Error, "Pollinations") {
+		t.Fatalf("result = %+v, want a refusal naming Pollinations", res)
+	}
+}
+
+// Поисковая модель живёт только у Pollinations: локальный GGUF и локальный
+// Ollama-сервер в интернет не ходят.
+func TestWebSearchToolRefusesOllama(t *testing.T) {
+	s := newToolSession(t, &toolFakeEngine{})
+	s.provider = config.ProviderOllama
+	res := decodeToolResult(t, s.runToolCall(context.Background(),
+		llm.ToolCall{Name: tools.NameWebSearch, Arguments: `{"query":"news"}`}, io.Discard))
+	if res.OK || !strings.Contains(res.Error, "Pollinations") {
+		t.Fatalf("result = %+v, want a refusal naming Pollinations", res)
 	}
 }
 
@@ -540,6 +552,37 @@ func TestToolLoopAsksUserThenFinishes(t *testing.T) {
 	}
 	if len(s.todos.Items()) != 1 {
 		t.Fatalf("todo list = %+v", s.todos.Items())
+	}
+}
+
+// Пользователь должен видеть результат todo: раньше в транскрипте оставалась
+// только пустая строка и голая метка [tool], а список уходил одной модели.
+func TestToolLoopShowsTodoResultToUser(t *testing.T) {
+	eng := &toolFakeEngine{replies: []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "t1", Type: "function", Name: tools.NameTodo, Arguments: `{"action":"add","task":"check disk"}`},
+		}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "t2", Type: "function", Name: tools.NameTodo, Arguments: `{"action":"list"}`},
+		}},
+		{Role: llm.RoleAssistant, Content: `{"intent":"explain","explanation":"done","command":"df -h"}`},
+	}}
+	s := newToolSession(t, eng)
+	tc, ok := s.toolEngine()
+	if !ok {
+		t.Fatal("tools must be enabled for this test")
+	}
+
+	var out strings.Builder
+	if err := s.chatWithTools(context.Background(), tc, "sys", "user",
+		llm.SamplingOptions{}, newStreamPrinter(&out), &out); err != nil {
+		t.Fatalf("chatWithTools: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"added [1] check disk", "open [1] check disk"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the todo result must be visible to the user, missing %q:\n%q", want, text)
+		}
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/executor"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/model"
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
 	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
 	"github.com/dedomorozoff/dmsh/internal/tools"
@@ -58,13 +59,13 @@ type SessionStats struct {
 // askStream, поэтому новый запрос может пересечься со старым. Это же делает
 // showStats безопасным во время стрима.
 type session struct {
-	mu        sync.Mutex
-	cfg       config.Config
-	provider  config.Provider
-	notice    string
-	engine    llm.Engine
-	tools     *tools.Registry
-	todos     *tools.TodoStore
+	mu       sync.Mutex
+	cfg      config.Config
+	provider config.Provider
+	notice   string
+	engine   llm.Engine
+	tools    *tools.Registry
+	todos    *tools.TodoStore
 	// searchEngine обслуживает инструмент websearch. Он создаётся лениво и
 	// использует отдельную search-модель того же провайдера.
 	searchEngine llm.Engine
@@ -122,12 +123,36 @@ func newToolRegistry(shell string) *tools.Registry {
 	return r
 }
 
+// normalizeForProvider приводит конфиг к уже выбранному провайдеру: пустая
+// модель означает «дефолт провайдера», а локальному GGUF адрес и имя модели
+// не нужны. Флаг --provider может переключить провайдера поверх модели,
+// взятой из конфига, поэтому дефолт выбирается здесь, а не в Load.
+func normalizeForProvider(cfg config.Config, provider config.Provider) (config.Config, error) {
+	cfg.Provider = provider
+	if !provider.Remote() {
+		path, err := resolveModelPath(cfg)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.ModelPath = path
+		return cfg, nil
+	}
+	cfg.ModelPath = ""
+	if strings.TrimSpace(cfg.RemoteModel) == "" {
+		cfg.RemoteModel = config.DefaultModelFor(provider)
+	}
+	return cfg, nil
+}
+
 func newSession(cfg config.Config) (*session, error) {
 	provider, notice, err := resolveProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Provider = provider
+	cfg, err = normalizeForProvider(cfg, provider)
+	if err != nil {
+		return nil, err
+	}
 
 	s := &session{
 		cfg:      cfg,
@@ -139,16 +164,6 @@ func newSession(cfg config.Config) (*session, error) {
 	}
 
 	s.registerOptionalTools()
-
-	if provider == config.ProviderLocal {
-		modelPath, err := resolveModelPath(cfg)
-		if err != nil {
-			return nil, err
-		}
-		s.cfg.ModelPath = modelPath
-	} else {
-		s.cfg.ModelPath = ""
-	}
 
 	eng, err := s.newEngine()
 	if err != nil {
@@ -169,7 +184,136 @@ func (s *session) newEngine() (llm.Engine, error) {
 		GPULayers:     s.cfg.GPULayers,
 		RemoteModel:   s.cfg.RemoteModel,
 		RemoteBaseURL: s.cfg.RemoteBaseURL,
+		APIKey:        s.cfg.APIKey(),
+		Proxy:         s.cfg.Proxy(),
 	})
+}
+
+// switchProvider меняет способ подключения к LLM на лету: провайдер,
+// модель, endpoint и ключ собираются в готовый конфиг, и только он уходит в
+// движок. Старый движок закрывается после того, как новый загрузился, иначе
+// ошибка загрузки оставила бы сессию без модели.
+//
+// «auto» здесь не остаётся отдельным провайдером: resolveProvider один раз
+// выбирает local или удалённый, и именно этим выбором живёт сессия.
+func (s *session) switchProvider(cfg config.Config) (config.Provider, string, error) {
+	provider, notice, err := resolveProvider(cfg)
+	if err != nil {
+		return "", "", err
+	}
+	cfg.Provider = provider
+	cfg, err = normalizeForProvider(cfg, provider)
+	if err != nil {
+		return "", "", err
+	}
+
+	s.mu.Lock()
+	prevCfg, prevProvider, prevNotice := s.cfg, s.provider, s.notice
+	s.cfg, s.provider, s.notice = cfg, provider, notice
+	s.mu.Unlock()
+
+	eng, err := s.newEngine()
+	if err != nil {
+		s.mu.Lock()
+		s.cfg, s.provider, s.notice = prevCfg, prevProvider, prevNotice
+		s.mu.Unlock()
+		return "", "", fmt.Errorf("load model: %w", err)
+	}
+	old := s.engine
+	oldSearch := s.searchEngine
+	s.mu.Lock()
+	s.engine, s.searchEngine = eng, nil
+	s.mu.Unlock()
+	if old != nil && old != eng {
+		_ = old.Close()
+	}
+	if oldSearch != nil {
+		_ = oldSearch.Close()
+	}
+	return provider, notice, nil
+}
+
+// applyProxy сохраняет настройки прокси и пересоздаёт сетевые движки, чтобы
+// следующий запрос уже ушёл через него. Некорректные настройки не
+// применяются: иначе пользователь потерял бы рабочее соединение и не смог
+// бы вернуться.
+//
+// Локальный провайдер не трогаем: llama.cpp не ходит в сеть, а перезагрузка
+// модели на каждый чих в настройках — это минуты ожидания впустую.
+func (s *session) applyProxy(p netproxy.Settings) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	p = p.Normalize()
+
+	s.mu.Lock()
+	s.cfg.SetProxy(p)
+	provider := s.provider
+	s.mu.Unlock()
+
+	if !provider.Remote() {
+		return nil
+	}
+	return s.resetRemoteEngines()
+}
+
+// resetRemoteEngines пересоздаёт движок основного провайдера и сбрасывает
+// движок websearch: у обоих зашит свой HTTP-клиент, поэтому после смены
+// прокси или endpoint'а они должны быть собраны заново.
+func (s *session) resetRemoteEngines() error {
+	eng, err := s.newEngine()
+	if err != nil {
+		return fmt.Errorf("load model: %w", err)
+	}
+	old := s.engine
+	oldSearch := s.searchEngine
+
+	s.mu.Lock()
+	s.engine = eng
+	s.searchEngine = nil
+	s.mu.Unlock()
+
+	if old != nil && old != eng {
+		_ = old.Close()
+	}
+	if oldSearch != nil {
+		_ = oldSearch.Close()
+	}
+	return nil
+}
+
+// applyRemoteBaseURL меняет endpoint удалённого провайдера. Адрес
+// проверяется до пересборки движков: битый endpoint не должен оставлять
+// сессию без модели.
+func (s *session) applyRemoteBaseURL(base string) error {
+	cfg := s.cfg
+	cfg.RemoteBaseURL = base
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.cfg.RemoteBaseURL = base
+	s.mu.Unlock()
+	return s.resetRemoteEngines()
+}
+
+// currentProvider — единый ответ на «какой провайдер сейчас»: явный выбор
+// сессии, затем её конфиг, затем конфиг оболочки (флаг/файл), и только потом
+// auto. Один и тот же порядок везде, где показывается живой провайдер:
+// /model, /models, меню моделей, статусная строка.
+func currentProvider(s *session, shell config.Provider) config.Provider {
+	if s != nil {
+		if s.provider.Valid() {
+			return s.provider
+		}
+		if s.cfg.Provider.Valid() {
+			return s.cfg.Provider
+		}
+	}
+	if shell.Valid() {
+		return shell
+	}
+	return config.ProviderAuto
 }
 
 // toLLMProvider переводит провайдера конфига в тип движка.
@@ -177,6 +321,8 @@ func toLLMProvider(p config.Provider) llm.Provider {
 	switch p {
 	case config.ProviderPollinations:
 		return llm.ProviderPollinations
+	case config.ProviderOllama:
+		return llm.ProviderOllama
 	case config.ProviderLocal:
 		return llm.ProviderLocal
 	default:
@@ -192,7 +338,18 @@ func toLLMProvider(p config.Provider) llm.Provider {
 func resolveProvider(cfg config.Config) (config.Provider, string, error) {
 	switch cfg.Provider {
 	case config.ProviderPollinations:
-		return config.ProviderPollinations, "", nil
+		notice := ""
+		if cfg.APIKey() == "" {
+			notice = "no " + config.APIKeyEnv + " set — Pollinations needs a key for generation " +
+				"(https://enter.pollinations.ai/keys)"
+		}
+		return config.ProviderPollinations, notice, nil
+	case config.ProviderOllama:
+		// Сервер может быть не запущен: проверять его здесь нечем, зато
+		// можно один раз сказать, что он должен быть запущен.
+		return config.ProviderOllama,
+			"using a local Ollama server at " + remoteEndpoint(config.ProviderOllama, cfg.RemoteBaseURL) +
+				" (start it with `ollama serve`)", nil
 	case config.ProviderLocal:
 		if _, err := resolveModelPath(cfg); err != nil {
 			return "", "", fmt.Errorf("provider=local, but no GGUF model found: %w\n"+
@@ -262,6 +419,32 @@ func (s *session) close() {
 	// Save history
 	_ = s.saveHistory()
 	s.saveTurns()
+}
+
+// setRemoteModel меняет модель удалённого провайдера: имя модели зашито в
+// движок, поэтому он пересобирается. Ошибка откатывает модель — сессия
+// остаётся на той, что работает.
+func (s *session) setRemoteModel(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("model name is empty")
+	}
+	s.mu.Lock()
+	if strings.TrimSpace(s.cfg.RemoteModel) == name {
+		s.mu.Unlock()
+		return nil
+	}
+	prev := s.cfg.RemoteModel
+	s.cfg.RemoteModel = name
+	s.mu.Unlock()
+
+	if err := s.resetRemoteEngines(); err != nil {
+		s.mu.Lock()
+		s.cfg.RemoteModel = prev
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // switchModel заменяет загруженную модель на лету. При ошибке загрузки

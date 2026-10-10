@@ -83,6 +83,12 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		showStats(out, s)
 	case line == "/model":
 		showModel(out, s)
+	case line == "/models":
+		showModels(out, s)
+	case line == "/settings", line == "/proxy":
+		showSettings(out, s)
+	case line == "/setup":
+		showSetup(out, s)
 	case line == "/retry":
 		if s.lastInput == "" {
 			fmt.Fprintf(out, "%sNo previous request to retry.%s\n", yellow, reset)
@@ -365,45 +371,124 @@ func showStats(out io.Writer, s *session) {
 	fmt.Fprintf(out, "  %sCurrent mode:%s  %s\n\n", bold, reset, s.cfg.Mode)
 }
 
+// showModel печатает экран /model теми же строками, что и TUI: общий
+// modelInfoLines, два разных вывода.
 func showModel(out io.Writer, s *session) {
-	fmt.Fprintf(out, "\n%s%s=== Model ===%s\n", bold, cyan, reset)
+	provider := currentProvider(s, "")
+	modelPath := firstNonEmpty(s.cfg.ModelPath, s.cfg.DefaultModel)
+	for _, line := range modelInfoLines(s, provider, modelPath) {
+		fmt.Fprintln(out, line)
+	}
+}
 
-	provider := s.provider
-	if provider == "" {
-		provider = config.ProviderAuto
+// modelInfoLines собирает строки экрана /model — общий текст для TUI и REPL,
+// чтобы два вывода не разъезжались. Провайдер и путь к модели выбираются
+// снаружи: у TUI есть ещё конфиг оболочки, у REPL — DefaultModel.
+func modelInfoLines(s *session, provider config.Provider, modelPath string) []string {
+	lines := []string{
+		"",
+		fmt.Sprintf("%s%s=== Model ===%s", bold, cyan, reset),
+		fmt.Sprintf("  %sProvider:%s  %s", bold, reset, provider),
 	}
-	fmt.Fprintf(out, "  %sProvider:%s  %s\n", bold, reset, provider)
-	if provider == config.ProviderPollinations {
-		model := s.cfg.RemoteModel
-		if model == "" {
-			model = config.DefaultRemoteModel
+	if showsRemoteProvider(provider, modelPath) {
+		lines = append(lines,
+			fmt.Sprintf("  %sIn use:%s  %s", bold, reset,
+				firstNonEmpty(s.cfg.RemoteModel, config.DefaultModelFor(provider))),
+			fmt.Sprintf("  %sEndpoint:%s %s", gray, reset, remoteEndpoint(provider, s.cfg.RemoteBaseURL)),
+		)
+		if provider == config.ProviderPollinations {
+			lines = append(lines, fmt.Sprintf("  %sSearch:%s   %s", bold, reset,
+				firstNonEmpty(s.cfg.SearchModel, config.DefaultSearchModel)))
 		}
-		fmt.Fprintf(out, "  %sIn use:%s  %s\n", bold, reset, model)
-		fmt.Fprintf(out, "  %sEndpoint:%s %s\n", gray, reset, pollinationsEndpoint(s.cfg.RemoteBaseURL))
-		fmt.Fprintf(out, "  %sTools:%s    %s\n", bold, reset, toolsLabel(s.cfg.ToolsEnabled))
-		fmt.Fprintf(out, "  %sAuth:%s     anonymous (no token)\n\n", gray, reset)
-		return
+		lines = append(lines,
+			fmt.Sprintf("  %sTools:%s    %s", bold, reset, toolsLabel(s.cfg.ToolsEnabled)),
+			// Ключ не печатается: он виден только как маска, и то в setup.
+			fmt.Sprintf("  %sAuth:%s     %s", gray, reset, apiKeyLabel(provider, s.cfg)),
+			"",
+		)
+		return lines
 	}
-	if s.cfg.ModelPath == "" {
-		fmt.Fprintf(out, "  %snone%s\n\n", yellow, reset)
-		return
+	if modelPath == "" {
+		return append(lines, fmt.Sprintf("  %snone%s", yellow, reset), "")
 	}
-	fmt.Fprintf(out, "  %sIn use:%s  %s\n", bold, reset, s.cfg.ModelPath)
-	if fi, err := os.Stat(s.cfg.ModelPath); err == nil {
-		fmt.Fprintf(out, "  %sSize:%s    %d MB\n", bold, reset, fi.Size()/1024/1024)
+	lines = append(lines, fmt.Sprintf("  %sIn use:%s  %s", bold, reset, modelPath))
+	if fi, err := os.Stat(modelPath); err == nil {
+		lines = append(lines, fmt.Sprintf("  %sSize:%s    %d MB", bold, reset, fi.Size()/1024/1024))
 	}
 	if provider == config.ProviderAuto {
-		fmt.Fprintf(out, "  %sHint:%s    dmsh config set provider pollinations — без локальной модели\n", gray, reset)
+		lines = append(lines, fmt.Sprintf("  %sHint:%s    dmsh config set provider ollama — локальный сервер вместо GGUF", gray, reset))
+	}
+	return append(lines, "")
+}
+
+// showModels печатает список моделей вне TUI: каталог провайдера или
+// локальные .gguf. В TUI то же окно открывается по /models и Ctrl+O.
+func showModels(out io.Writer, s *session) {
+	provider := currentProvider(s, "")
+	modelPath := firstNonEmpty(s.cfg.ModelPath, s.cfg.DefaultModel)
+	if !showsRemoteProvider(provider, modelPath) {
+		listLocalModels(out)
+		return
+	}
+	if provider == config.ProviderAuto {
+		// auto без локального GGUF работает через Pollinations — тот же
+		// выбор, что делает resolveProvider при старте.
+		provider = config.ProviderPollinations
+	}
+	fmt.Fprintf(out, "\n%s%s=== models: %s catalog ===%s\n", bold, cyan, provider, reset)
+	// Ключ, как и в меню, не подставляется: каталог открыт без него.
+	models, err := llm.ListRemoteModels(llm.Params{
+		Provider:      toLLMProvider(provider),
+		RemoteModel:   s.cfg.RemoteModel,
+		RemoteBaseURL: s.cfg.RemoteBaseURL,
+		APIKey:        s.cfg.APIKey(),
+		Proxy:         s.cfg.Proxy(),
+	})
+	if err != nil {
+		fmt.Fprintf(out, "%s%s%s\n", red, err, reset)
+		return
+	}
+	if len(models) == 0 {
+		fmt.Fprintf(out, "%sthe provider reported no models%s\n", gray, reset)
+		return
+	}
+	for _, rm := range models {
+		if rm.Note != "" {
+			fmt.Fprintf(out, "  %s  %s(%s)%s\n", rm.ID, gray, rm.Note, reset)
+			continue
+		}
+		fmt.Fprintf(out, "  %s\n", rm.ID)
 	}
 	fmt.Fprintln(out)
 }
 
-// pollinationsEndpoint подставляет дефолтный endpoint, если он не задан.
-func pollinationsEndpoint(base string) string {
-	if strings.TrimSpace(base) == "" {
-		return llm.DefaultPollinationsBaseURL
+// showsRemoteProvider решает, показывать ли удалённую часть /model. Провайдер
+// auto после resolveProvider уже заменён на конкретный, но в конфиге он
+// остаётся: «auto» значит «локальная модель, иначе удалённая», а не
+// «удалённая».
+func showsRemoteProvider(provider config.Provider, modelPath string) bool {
+	switch provider {
+	case config.ProviderLocal:
+		return false
+	case config.ProviderAuto:
+		return strings.TrimSpace(modelPath) == ""
+	default:
+		return true
 	}
-	return base
+}
+
+// remoteEndpoint подставляет адрес провайдера, если он не задан. Для
+// локального GGUF адреса нет — там показывается адрес удалённого по
+// умолчанию: настройки прокси и endpoint всё равно относятся к сетевым
+// запросам, а не к локальной модели.
+func remoteEndpoint(provider config.Provider, base string) string {
+	if s := strings.TrimSpace(base); s != "" {
+		return s
+	}
+	if provider == config.ProviderOllama {
+		return llm.DefaultOllamaBaseURL
+	}
+	return llm.DefaultPollinationsBaseURL
 }
 
 func toolsLabel(enabled bool) string {
@@ -413,13 +498,30 @@ func toolsLabel(enabled bool) string {
 	return "off"
 }
 
+// apiKeyLabel описывает ключ без его содержимого: видно только, откуда он
+// взят. Значение секрета в вывод сессии попадать не должно.
+func apiKeyLabel(provider config.Provider, cfg config.Config) string {
+	if provider == config.ProviderOllama {
+		return "not needed (local server)"
+	}
+	switch cfg.APIKeySource() {
+	case "env":
+		return "api key from " + config.APIKeyEnv
+	case "config":
+		return "api key from config.json"
+	default:
+		return "no api key"
+	}
+}
+
 func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "%s%s=== dmsh help ===%s\n\n", bold, cyan, reset)
 	fmt.Fprintf(out, "%sDescription:%s\n  dmsh is a natural language shell. Type \"show files\" and it\n  runs \"ls -la\" for you.\n\n", bold, reset)
 	fmt.Fprintf(out, "%sModes:%s\n", bold, reset)
 	fmt.Fprintf(out, "  %sAI%s      — AI generates and executes commands automatically (default)\n", yellow, reset)
 	fmt.Fprintf(out, "  %sHelp%s    — command + explanation, nothing is executed\n", yellow, reset)
-	fmt.Fprintf(out, "  %sTerminal%s — real shell session in a pseudo-terminal\n\n", yellow, reset)
+	fmt.Fprintf(out, "  %sTerminal%s — shell session in a pseudo-terminal inside the app window\n\n", yellow, reset)
+
 	fmt.Fprintf(out, "  switch with %sShift+Tab%s (cycle), %sCtrl+P%s (palette) or %s/mode <name>%s\n\n", yellow, reset, yellow, reset, yellow, reset)
 	fmt.Fprintf(out, "%sCommands:%s\n", bold, reset)
 	fmt.Fprintf(out, "  plain text    — send request to LLM\n")
@@ -429,13 +531,16 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/pwd%s       — show current directory\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/history%s   — show history\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/audit%s     — show audit log of executed commands\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/mode%s      — show current mode\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/mode%s      — show the modes and the current one\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode ai%s   — auto-execute mode\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode help%s — explain-only mode (run_command disabled)\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode shell%s — terminal mode\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/stats%s     — session statistics\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/todo%s      — show the task list kept by the model\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/model%s     — show the provider and model currently in use\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/models%s    — list local models or the provider's catalog\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/setup%s     — show how dmsh connects to the LLM and how to change it\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/settings%s  — show network settings (proxy, endpoint) and how to change them\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/retry%s     — re-run last request with alternate approach\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/export%s    — copy last command to clipboard or /export last > file\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/alias%s     — list aliases; /alias name=\"request\" to create; /alias -d name to delete\n", yellow, reset)
@@ -479,18 +584,18 @@ func showKeyBindings(out io.Writer) {
 	fmt.Fprintf(out, "  %sShift+Tab%s  — cycle modes (ai → help → terminal)\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode ai%s   — AI mode (auto-execute)\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mode help%s — Help mode (command + explanation, nothing is executed)\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/mode shell%s — Terminal mode (real shell in a pseudo-terminal)\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/mode shell%s — Terminal mode (shell inside this window)\n", yellow, reset)
 	fmt.Fprintf(out, "\n%sSpecial:%s\n", bold, reset)
 	fmt.Fprintf(out, "  %s/exit%s      — exit REPL\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/shell%s     — open a terminal session\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/shell%s     — open a terminal session in the app window\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/cd%s path   — change directory\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/clear%s     — clear screen\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/pwd%s       — show current directory\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/history%s   — show history\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/audit%s     — show audit log of executed commands\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/mode%s      — show current mode\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/mode%s      — show the modes and the current one\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/bind%s      — show this list\n", yellow, reset)
-	fmt.Fprintf(out, "  %s!command%s   — execute command directly\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/setup%s     — show how dmsh connects to the LLM\n", yellow, reset)
 	fmt.Fprintf(out, "\n%sCompletion:%s\n", bold, reset)
 	fmt.Fprintf(out, "  %sTab%s        — auto-complete slash commands\n", yellow, reset)
 }
