@@ -461,7 +461,7 @@ func (m tuiModel) renderView() tea.View {
 		return v
 	}
 
-	col := displayWidth(m.buildPrompt())
+	var col int
 	switch m.state {
 	case tuiConfirming:
 		col = displayWidth(fmt.Sprintf("%sExecute? [y/N]: %s%s", colorYellow, m.confirmText, colorReset))
@@ -1616,22 +1616,6 @@ func (m tuiModel) handleQuestionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cursorPos += runeSliceLen(msg.Text)
 	}
 	return m, nil
-}
-
-func (m *tuiModel) executeDirect(cmd string) {
-	if handled, shouldExit, err := runBuiltin(cmd, io.Discard, io.Discard, m.s.recent); handled {
-		if err != nil {
-			m.addLine(fmt.Sprintf("%s%s%s", colorRed, err, colorReset))
-		}
-		if shouldExit {
-			m.addLine("bye!")
-		}
-		m.s.addRecentAndHistory(cmd, "direct")
-		return
-	}
-	// Прямая команда тоже идёт в фоне: иначе composer через "!" вешает ввод.
-	mm, _ := m.startDirectCommand(cmd)
-	*m = mm
 }
 
 // startDirectCommand запускает "!"-команду в фоне. Встроенные (cd, exit)

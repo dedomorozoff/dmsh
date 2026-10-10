@@ -104,14 +104,6 @@ func (s *session) addFixNote() {
 	s.stats.ErrorsFix++
 }
 
-// snapshotStats возвращает копию статистики — без блокировки на стороне
-// вызывающего.
-func (s *session) snapshotStats() SessionStats {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stats
-}
-
 // newToolRegistry собирает набор инструментов для текущей сессии.
 // Команда оболочки попадает в схемы, но исполняется отдельно — с проверкой
 // политики безопасности, поэтому её обработчик в реестре — заглушка.

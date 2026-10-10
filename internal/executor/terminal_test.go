@@ -115,10 +115,7 @@ func TestTerminalSessionReadWrite(t *testing.T) {
 	var out bytes.Buffer
 	buf := make([]byte, 4096)
 	deadline := time.After(60 * time.Second)
-	for {
-		if strings.Contains(out.String(), "dmsh-session-marker") {
-			break
-		}
+	for !strings.Contains(out.String(), "dmsh-session-marker") {
 		select {
 		case <-deadline:
 			t.Fatalf("session produced no output, got %q", out.String())

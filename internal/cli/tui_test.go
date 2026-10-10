@@ -816,13 +816,12 @@ func TestPaletteEntriesAllResolvable(t *testing.T) {
 // Статусная строка и F1 должны быть согласованы с тем, что реально
 // работает: иначе подсказки врут.
 func TestStatuslineHintsMatchRealBindings(t *testing.T) {
-	m := newTestTui()
 	for _, key := range []tea.KeyPressMsg{
 		{Code: tea.KeyF1},
 		{Code: 'p', Mod: tea.ModCtrl},
 		{Code: 'q', Mod: tea.ModCtrl},
 	} {
-		m = newTestTui()
+		m := newTestTui()
 		mm, cmd := m.handleKey(key)
 		got := mm.(tuiModel)
 		switch key.Keystroke() {
