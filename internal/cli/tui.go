@@ -293,12 +293,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeTerminal()
 		return m, nil
 	case tea.PasteMsg:
-		if m.state == tuiIdle || m.state == tuiQuestion {
-			m.input = insertAt(m.input, m.cursorPos, msg.Content)
-			m.cursorPos += runeSliceLen(msg.Content)
-			m.tabMatches = nil
-		}
-		return m, nil
+		return m.handlePaste(msg), nil
 	case tokenMsg:
 		if len(msg.text) > 0 {
 			m.streamed = true
@@ -827,6 +822,52 @@ func appendStream(content, text string) string {
 
 func displayWidth(s string) int {
 	return ansi.StringWidth(s)
+}
+
+// handlePaste вставляет буфер обмена в то поле, которое сейчас активно.
+// Раньше вставка работала только в строке ввода и в вопросе, поэтому ключ
+// провайдера и пароль прокси приходилось набирать по букве.
+func (m tuiModel) handlePaste(msg tea.PasteMsg) tuiModel {
+	switch m.state {
+	case tuiIdle, tuiQuestion:
+		m.insertInput(msg.Content)
+	case tuiSetup:
+		if m.supEditing {
+			m.insertInput(msg.Content)
+		}
+	case tuiSettings:
+		if m.setEditing {
+			m.insertInput(msg.Content)
+		}
+	case tuiPalette:
+		m.input = insertAt(m.input, m.cursorPos, msg.Content)
+		m.cursorPos = runeSliceLen(m.input)
+		m.paletteIdx = 0
+	case tuiModelMenu:
+		// Пока идёт загрузка каталога фильтр не меняем: список всё равно
+		// перерисовывается целиком по окончании загрузки.
+		if !m.modelBusy {
+			m.modelFilter += msg.Content
+			m.modelIdx = 0
+		}
+	case tuiSearch:
+		m.searchQuery += msg.Content
+		m.applySearch()
+	case tuiTerminal:
+		if m.term != nil {
+			m.term.writeText(msg.Content)
+		}
+	}
+	return m
+}
+
+// insertInput вставляет текст в общую строку ввода. Промпт, ключ
+// провайдера и пароль прокси правятся одним и тем же буфером, поэтому и
+// вставка у них общая.
+func (m *tuiModel) insertInput(text string) {
+	m.input = insertAt(m.input, m.cursorPos, text)
+	m.cursorPos += runeSliceLen(text)
+	m.tabMatches = nil
 }
 
 func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

@@ -186,6 +186,18 @@ func (p *terminalPane) writeKey(msg tea.KeyPressMsg) {
 	_, _ = p.term.Write(data)
 }
 
+// writeText отправляет вставку из буфера обмена. Перевод строки приводится к
+// CR: оболочка в raw-режиме ждёт именно его, иначе многострочная вставка
+// слиплась бы в одну строку и не отправилась.
+func (p *terminalPane) writeText(text string) {
+	if p.term == nil || text == "" {
+		return
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	_, _ = p.term.Write([]byte(strings.ReplaceAll(text, "\n", "\r")))
+}
+
 // waitTerminal качает вывод терминала в цикл обновления TUI. Пока панель
 // открыта, она перевзводится после каждого сообщения — в том числе когда
 // терминал нарисован под модальным окном, иначе вывод перестал бы приходить

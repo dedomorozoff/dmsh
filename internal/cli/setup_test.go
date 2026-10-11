@@ -120,6 +120,53 @@ func TestSetupAPIKeyIsMasked(t *testing.T) {
 	}
 }
 
+// Ключ из буфера обмена — нормальный способ задать его: набирать sk-... по
+// букве невозможно, а без вставки окно настроек для этого поля бесполезно.
+func TestSetupAPIKeyPaste(t *testing.T) {
+	m := newSetupTui()
+	m.supIdx = supRowAPIKey
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, _ := m.Update(tea.PasteMsg{Content: "sk-pasted"})
+	m = mm.(tuiModel)
+	if !strings.Contains(m.editLine(), "sk-pasted") {
+		t.Fatalf("the pasted key must be visible: %q", m.editLine())
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.supKey != "sk-pasted" {
+		t.Fatalf("key = %q, want the pasted value", m.supKey)
+	}
+	if m.supEditing {
+		t.Fatal("enter must leave the field after a paste")
+	}
+}
+
+// Вставка без активного поля правом не считается: ключ меняется только
+// тем, что пользователь открыл строку и подтвердил ввод.
+func TestSetupPasteOutsideFieldIsIgnored(t *testing.T) {
+	m := newSetupTui()
+	m.supIdx = supRowProvider
+	mm, _ := m.Update(tea.PasteMsg{Content: "sk-pasted"})
+	got := mm.(tuiModel)
+	if got.supKey != "" || got.input != "" {
+		t.Fatalf("paste outside a field must not reach the key: %q / %q", got.supKey, got.input)
+	}
+}
+
+func TestSetupRemoteModelPaste(t *testing.T) {
+	m := newSetupTui()
+	m.supIdx = supRowRemote
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, _ := m.Update(tea.PasteMsg{Content: "gemini-search"})
+	m = mm.(tuiModel)
+	if m.cursorPos != runeSliceLen("gemini-search") {
+		t.Fatalf("cursor = %d, want the end of the pasted text", m.cursorPos)
+	}
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.supRemote != "gemini-search" {
+		t.Fatalf("model = %q, want the pasted value", m.supRemote)
+	}
+}
+
 // Показанная модель — это то, что уйдёт в запрос: пустое поле значит
 // дефолт выбранного провайдера, а не пустую модель.
 func TestSetupRemoteModelIsResolved(t *testing.T) {

@@ -211,6 +211,64 @@ func TestPasteInsertsCyrillic(t *testing.T) {
 	}
 }
 
+// Вставка идёт в то поле, которое открыто: у каждого экрана свой буфер, и
+// молчаливый переход в режим правки означал бы правку не того поля.
+func TestPasteFollowsTheActiveField(t *testing.T) {
+	paste := func(m tuiModel) tuiModel {
+		t.Helper()
+		mm, _ := m.Update(tea.PasteMsg{Content: "текст"})
+		return mm.(tuiModel)
+	}
+	t.Run("prompt", func(t *testing.T) {
+		m := paste(newTestTui())
+		if m.input != "текст" {
+			t.Fatalf("input = %q, want the pasted text", m.input)
+		}
+	})
+	t.Run("palette", func(t *testing.T) {
+		m := paste(newTestTui().openPalette())
+		if m.input != "текст" {
+			t.Fatalf("palette query = %q, want the pasted text", m.input)
+		}
+	})
+	t.Run("model filter", func(t *testing.T) {
+		m := newTestTui()
+		m.state = tuiModelMenu
+		m = paste(m)
+		if m.modelFilter != "текст" {
+			t.Fatalf("model filter = %q, want the pasted text", m.modelFilter)
+		}
+	})
+	t.Run("history search", func(t *testing.T) {
+		m := newTestTui()
+		m.history = []string{"ls -la", "текст в истории"}
+		mm, _ := m.startSearch()
+		m = paste(mm.(tuiModel))
+		if m.searchQuery != "текст" {
+			t.Fatalf("search query = %q, want the pasted text", m.searchQuery)
+		}
+		if m.input != "текст в истории" {
+			t.Fatalf("search must re-run on the pasted query: %q", m.input)
+		}
+	})
+	t.Run("question", func(t *testing.T) {
+		m := newTestTui()
+		m.state = tuiQuestion
+		m = paste(m)
+		if m.input != "текст" {
+			t.Fatalf("answer = %q, want the pasted text", m.input)
+		}
+	})
+	t.Run("no text field", func(t *testing.T) {
+		m := newTestTui()
+		m.state = tuiConfirming
+		m = paste(m)
+		if m.input != "" {
+			t.Fatalf("a confirmation dialog has no field to paste into: %q", m.input)
+		}
+	})
+}
+
 func TestCtrlDExitsOnEmptyLine(t *testing.T) {
 	m := newTestTui()
 	_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
@@ -743,6 +801,22 @@ func TestTerminalOutputGoesToScreen(t *testing.T) {
 	}
 	if strings.Contains(got.content, "dmsh-term-marker") {
 		t.Fatalf("terminal output must not be mixed into the transcript:\n%s", got.content)
+	}
+}
+
+// Вставка в режиме терминала уходит в оболочку, а не в строку ввода:
+// текст не должен возвращаться в промпт после выхода из терминала.
+func TestTerminalPasteDoesNotReachThePrompt(t *testing.T) {
+	m := newTestTui()
+	m.state = tuiTerminal
+	m.term = &terminalPane{screen: vt.NewScreen(40, 5)}
+	mm, _ := m.Update(tea.PasteMsg{Content: "echo привет\r\n"})
+	got := mm.(tuiModel)
+	if got.input != "" {
+		t.Fatalf("terminal paste must not land in the prompt: %q", got.input)
+	}
+	if got.cursorPos != 0 {
+		t.Fatalf("cursor = %d, want it left where it was", got.cursorPos)
 	}
 }
 

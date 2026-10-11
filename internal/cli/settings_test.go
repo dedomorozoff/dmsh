@@ -45,6 +45,47 @@ func editValue(m tuiModel, row int, text string) tuiModel {
 	return press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
+// pasteValue открывает строку на правку и вставляет текст из буфера.
+// Логин и пароль прокси вводятся только так: набирать их по букве — мучение.
+func pasteValue(m tuiModel, row int, text string) tuiModel {
+	m.setIdx = row
+	m = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, _ := m.Update(tea.PasteMsg{Content: text})
+	m = mm.(tuiModel)
+	return press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+}
+
+func TestSettingsPasteProxyPassword(t *testing.T) {
+	m := newSettingsTui()
+	m = pasteValue(m, setRowPass, "s3cr3t")
+	if m.setPass != "s3cr3t" {
+		t.Fatalf("password = %q, want the pasted value", m.setPass)
+	}
+	if strings.Contains(strings.Join(m.settingsRows(), "\n"), "s3cr3t") {
+		t.Fatalf("the pasted password must be masked in the list:\n%s", strings.Join(m.settingsRows(), "\n"))
+	}
+}
+
+func TestSettingsPasteEndpoint(t *testing.T) {
+	m := newSettingsTui()
+	m = pasteValue(m, setRowEndpoint, "https://example.test/v1")
+	if m.setEndpoint != "https://example.test/v1" {
+		t.Fatalf("endpoint = %q, want the pasted value", m.setEndpoint)
+	}
+}
+
+// Без открытой строки правки вставке некуда попасть: молчаливый переход в
+// режим ввода означал бы, что ключ поменялся без спроса.
+func TestSettingsPasteOutsideFieldIsIgnored(t *testing.T) {
+	m := newSettingsTui()
+	m.setIdx = setRowMode
+	mm, _ := m.Update(tea.PasteMsg{Content: "s3cr3t"})
+	got := mm.(tuiModel)
+	if got.setPass != "" || got.input != "" {
+		t.Fatalf("paste outside a field must not reach the password: %q / %q", got.setPass, got.input)
+	}
+}
+
 func TestPaletteOpensSettings(t *testing.T) {
 	m := newTestTui()
 	m = openSettingsViaPalette(t, m)
