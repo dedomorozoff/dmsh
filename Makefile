@@ -63,6 +63,25 @@ BUILD_TAGS := llama
 CUDA_GO_LDFLAGS :=
 endif
 
+# Раскладка установки. PREFIX — для make install (системный префикс),
+# USER_PREFIX — для make install-user (без sudo). DESTDIR нужен упаковщикам:
+# deb/rpm/tar-цели складывают туда дерево, поэтому при такой установке SUDO
+# всегда пуст.
+PREFIX      ?= /usr/local
+USER_PREFIX ?= $(HOME)/.local
+DESTDIR     ?=
+
+# sudo подставляется только если префикс недоступен на запись. Проверяем
+# первый существующий каталог на пути к префиксу: ~/.local может быть ещё
+# не создан, а -w на несуществующем каталоге всегда даёт false.
+# Цикл и проверка живут в одном $(shell): вложенный $(shell) внутри $(call)
+# вычисляется make'ом заранее и его вывод попал бы в backticks как команда.
+SUDO ?= $(shell d="$(DESTDIR)$(PREFIX)"; \
+	while [ ! -e "$$d" ] && [ "$$d" != "/" ]; do d=`dirname "$$d"`; done; \
+	if [ -w "$$d" ]; then echo ""; \
+	elif command -v sudo >/dev/null 2>&1; then echo "sudo"; \
+	else echo ""; fi)
+
 # Рецепты для Windows оформлены через powershell, а не через синтаксис cmd
 # («if not exist», «copy /Y»): make запускает рецепты через sh, где такой
 # синтаксис не разбирается.
@@ -124,6 +143,53 @@ else
 	$(WIN_MKDIR_BIN)
 endif
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/dmsh
+
+# Установка бинарника и man-страниц в префикс. Первый аргумент — префикс,
+# второй — команда повышения прав (пустая, если права есть или не нужны).
+define unix_install
+	$(2) install -d $(DESTDIR)$(1)/bin $(DESTDIR)$(1)/share/man/man1
+	$(2) install -m 755 $(BIN) $(DESTDIR)$(1)/bin/dmsh
+	$(2) install -m 644 man/*.1 $(DESTDIR)$(1)/share/man/man1/
+endef
+
+# Подсказка про PATH — только при настоящей установке. С DESTDIR файлы уходят
+# в staging-каталог пакета, а не в PATH пользователя.
+define path_note
+	@case ":$$PATH:" in *":$(1):"*) ;; \
+		*) echo "Note: $(1) is not in PATH, add it to your profile";; esac
+endef
+
+.PHONY: install
+install: build gen-man ## Установить в /usr/local (PREFIX=... — другой путь)
+ifeq ($(IS_UNIX),1)
+	$(call unix_install,$(PREFIX),$(SUDO))
+	@echo "Installed: $(DESTDIR)$(PREFIX)/bin/dmsh"
+	$(if $(DESTDIR),,$(call path_note,$(PREFIX)/bin))
+else
+	@echo "make install is Unix-only. On Windows use: powershell -ExecutionPolicy Bypass -File install.ps1"
+endif
+
+.PHONY: install-user
+install-user: build gen-man ## Установить в ~/.local без sudo
+ifeq ($(IS_UNIX),1)
+	$(call unix_install,$(USER_PREFIX),)
+	@echo "Installed: $(USER_PREFIX)/bin/dmsh"
+	$(if $(DESTDIR),,$(call path_note,$(USER_PREFIX)/bin))
+else
+	@echo "make install-user is Unix-only. On Windows use: powershell -ExecutionPolicy Bypass -File install.ps1"
+endif
+
+# Ставит тот же $(BIN), что и build: stub и llama-сборка делят один выходной
+# путь, поэтому install и install-stub перезаписывают друг друга в bin/.
+.PHONY: install-stub
+install-stub: build-stub gen-man ## Установить сборку без llama.cpp (только удалённые провайдеры)
+ifeq ($(IS_UNIX),1)
+	$(call unix_install,$(PREFIX),$(SUDO))
+	@echo "Installed: $(DESTDIR)$(PREFIX)/bin/dmsh (stub, no llama.cpp)"
+	$(if $(DESTDIR),,$(call path_note,$(PREFIX)/bin))
+else
+	@echo "make install-stub is Unix-only. On Windows use: powershell -ExecutionPolicy Bypass -File install.ps1"
+endif
 
 .PHONY: submodule
 submodule: ## Инициализировать и обновить вложенный модуль llama.cpp

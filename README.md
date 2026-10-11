@@ -53,6 +53,18 @@ make llama       # build llama.cpp static libs (~10-15 min)
 make build       # build bin/dmsh
 ```
 
+Then install:
+
+```bash
+make install       # -> /usr/local/bin/dmsh + man pages (sudo if needed)
+make install-user  # -> ~/.local/bin/dmsh, no sudo at all
+make install-stub  # same, but without llama.cpp (fast build, remote providers only)
+```
+
+`PREFIX` changes the destination (`make install PREFIX=/opt/dmsh`), `DESTDIR`
+stages the tree for packaging. On Windows use `powershell -ExecutionPolicy
+Bypass -File install.ps1`.
+
 Requirements: Go 1.23+, C/C++ toolchain, CMake, Git.
 
 ## Quick start
@@ -400,6 +412,9 @@ make llama GPU=metal   # Metal (Apple Silicon)
 make llama GPU=vulkan  # Vulkan
 make build-stub        # no LLM (no CGO) — useful for CI
 make build-all         # cross-compile binaries for all platforms
+make install           # install to /usr/local (PREFIX=..., sudo if needed)
+make install-user      # install to ~/.local, no sudo
+make install-stub      # install the no-llama.cpp build instead
 make dist-deb          # .deb package
 make dist-rpm          # .rpm package
 make dist-arch         # Arch package (builds and installs)
