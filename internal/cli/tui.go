@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbletea/v2"
@@ -17,6 +18,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/netproxy"
 	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/vt"
 )
 
 type tuiState int
@@ -32,6 +34,8 @@ const (
 	tuiSettings
 	tuiSetup
 	tuiModeMenu
+	tuiDirMenu  // выбор папки кликом по текущей папке в статусной строке
+	tuiTodoMenu // список задач модели с чекбоксами
 	tuiTerminal // терминал в окне приложения: экран занимает весь кадр
 	tuiRunning  // команда выполняется: ввод свободен, виден спиннер
 )
@@ -48,6 +52,9 @@ type tuiModel struct {
 
 	content   string
 	modeLabel string
+	// scrollbackLines — сколько строк в content с последней обрезки. Сам
+	// транскрипт не ограничен: его обрезает scrollback.go.
+	scrollbackLines int
 
 	width  int
 	height int
@@ -63,7 +70,10 @@ type tuiModel struct {
 
 	confirmText string
 	confirmOK   func(bool)
-	pendingResp prompt.Response
+	// confirmReason — правило, которое потребовало подтверждения. Без него
+	// окно спрашивает «точно ли?», не объясняя, кто и почему.
+	confirmReason string
+	pendingResp   prompt.Response
 	// clarify ведёт диалог уточнений текущего запроса: модель не должна
 	// спрашивать одно и то же и не должна спрашивать бесконечно.
 	clarify clarification
@@ -123,6 +133,21 @@ type tuiModel struct {
 	supStatus    string
 	supStatusErr bool
 
+	// dirMenu — выбор папки (клик по папке в статусной строке). Список
+	// каталогов перечитывается при каждом переходе, поэтому держим его
+	// рядом с состоянием, а не кешируем на сессию.
+	dirItems  []dirItem
+	dirIdx    int
+	dirFilter string
+	dirErr    string
+
+	// todoIdx — выделенная задача в окне задач модели.
+	todoIdx int
+
+	// actionCmd — команда последнего выполнения: после неё dmsh предлагает,
+	// что делать дальше. Пусто — панели под ответом нет.
+	actionCmd string
+
 	// term — встроенный терминал режима shell. Не nil, только пока
 	// псевдотерминал жив: экран терминала рисуется вместо транскрипта.
 	term *terminalPane
@@ -141,6 +166,14 @@ type tuiModel struct {
 	cmdCancel    context.CancelFunc
 	cmdCommand   string
 	cmdStartedAt time.Time
+	// cmdCh — живые куски вывода фоновой команды и её итог. Один канал на
+	// оба: итог обязан прийти после последнего куска, иначе «готово» легло бы
+	// поверх недописанного вывода.
+	cmdCh chan tea.Msg
+	// cmdLive — сколько байт вывода уже показано вживую, cmdTrunc — живой
+	// вывод обрезан по лимиту. Итог дублировать уже показанное не должен.
+	cmdLive  int
+	cmdTrunc bool
 }
 
 // slashCommands — commands offered by Tab completion and the "/" menu.
@@ -160,7 +193,7 @@ var slashDesc = map[string]string{
 	"/setup":    "choose how dmsh connects to the LLM",
 	"/settings": "network settings: proxy, endpoint, connection test",
 	"/proxy":    "shortcut for /settings",
-	"/todo":     "show the model's task list",
+	"/todo":     "the model's task list: click a task to mark it done",
 	"/stats":    "session statistics",
 	"/export":   "export the last command",
 	"/alias":    "manage aliases",
@@ -211,6 +244,92 @@ type cmdDoneMsg struct {
 	resp prompt.Response
 	res  executor.Result
 	dec  policyDecisionLite
+}
+
+// cmdOutMsg — кусок вывода фоновой команды, пришедший, пока она ещё пишет.
+// Границы кусков не совпадают со строками: текст дописывается как есть.
+type cmdOutMsg struct {
+	seq   int
+	text  string
+	isErr bool
+}
+
+// cmdTickMsg — секундный тик фоновой команды: обновляет время «идёт…».
+type cmdTickMsg struct{}
+
+// waitForCmd ждёт следующего сообщения фоновой команды: куска вывода или
+// итога. Канал закрывается вместе с командой, и тогда команда возвращает
+// nil — лишнего сообщения в Update не будет.
+func waitForCmd(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+// startBackgroundCmd готовит канал и горутину фоновой команды. Один запуск —
+// один канал: следующая команда получает свой, и устаревшие куски вывода
+// отбрасываются по seq. Тик секунды едет тем же каналом — по нему в строке
+// ввода видно, что команда жива и сколько уже идёт.
+func (m *tuiModel) startBackgroundCmd(shell, command string, onDone func(executor.Result) tea.Msg) {
+	ch := make(chan tea.Msg, 64)
+	m.cmdCh = ch
+	m.cmdLive, m.cmdTrunc = 0, false
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cmdCancel = cancel
+	seq := m.cmdSeq
+
+	go func() {
+		ticks := time.NewTicker(time.Second)
+		var ticker sync.WaitGroup
+		ticker.Add(1)
+		go func() {
+			defer ticker.Done()
+			tickCmdLoop(ch, ticks.C, ctx.Done())
+		}()
+
+		res := executor.RunStream(ctx, shell, command, func(text string, isErr bool) {
+			if text == "" {
+				return
+			}
+			select {
+			case ch <- cmdOutMsg{seq: seq, text: text, isErr: isErr}:
+			case <-ctx.Done():
+			}
+		})
+		select {
+		case ch <- onDone(res):
+		case <-ctx.Done():
+		}
+		// Канал закрываем только после остановки тикера: отправка в
+		// закрытый канал паникует, а тикер как раз шлёт в него.
+		ticks.Stop()
+		cancel()
+		ticker.Wait()
+		close(ch)
+	}()
+}
+
+// tickCmdLoop шлёт в канал команды секундный тик, пока команда жива. Тик едет
+// тем же каналом, что и вывод: иначе Update пришлось бы возвращать сразу
+// две команды, и очередь вывода перестала бы продвигаться между тиками.
+func tickCmdLoop(ch chan<- tea.Msg, ticks <-chan time.Time, done <-chan struct{}) {
+	for {
+		select {
+		case <-ticks:
+			select {
+			case ch <- cmdTickMsg{}:
+			case <-done:
+				return
+			}
+		case <-done:
+			return
+		}
+	}
 }
 
 // directDoneMsg — прямая команда через "!" завершилась в фоне.
@@ -292,13 +411,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.resizeTerminal()
 		return m, nil
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+	case tea.MouseReleaseMsg:
+		return m.handleMouseRelease(msg)
+	case tea.MouseMotionMsg:
+		return m.handleMouseMotion(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 	case tea.PasteMsg:
 		return m.handlePaste(msg), nil
 	case tokenMsg:
 		if len(msg.text) > 0 {
 			m.streamed = true
 			m.streamHasContent = true
-			m.content = appendStream(m.content, msg.text)
+			m.appendScrollback(msg.text)
+			// Ответ модели прокручивается сам: пока он пишется, пользователь
+			// смотрит на него, а не читает лог команды выше.
 			m.scrollOffset = 0
 		}
 		if m.streaming && m.tokenCh != nil {
@@ -377,6 +506,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case cmdDoneMsg:
 		return m.finishBackgroundCommand(msg)
+	case cmdOutMsg:
+		return m.appendCmdOutput(msg)
+	case cmdTickMsg:
+		// Тик только обновляет время в строке ввода; переделывать его не
+		// нужно — следующий тик придёт из той же горутины команды.
+		return m, nil
 	case directDoneMsg:
 		return m.finishDirectCommand(msg)
 	case modelDoneMsg:
@@ -434,6 +569,24 @@ func (m tuiModel) View() tea.View {
 func (m tuiModel) renderView() tea.View {
 	var v tea.View
 	v.AltScreen = true
+	// Мышь нужна ради кликов по статусной строке и окнам. В режиме терминала
+	// она отдаётся оболочке внутри окна: там мышь может просить сама
+	// оболочка, а не dmsh.
+	if m.mouseEnabled() {
+		if m.state == tuiTerminal {
+			// Движение без нажатия нужно только когда программа внутри
+			// окна включила режим 1003: иначе терминал шлёт поток событий
+			// впустую.
+			if mode := m.terminalMouseMode(); mode.Track != vt.MouseOff {
+				v.MouseMode = tea.MouseModeCellMotion
+				if mode.WantsMotion() {
+					v.MouseMode = tea.MouseModeAllMotion
+				}
+			}
+		} else {
+			v.MouseMode = tea.MouseModeCellMotion
+		}
+	}
 	v.SetContent(m.render())
 
 	// Терминал рисует курсор сам: он принадлежит оболочке, а не строке
@@ -458,8 +611,6 @@ func (m tuiModel) renderView() tea.View {
 
 	var col int
 	switch m.state {
-	case tuiConfirming:
-		col = displayWidth(fmt.Sprintf("%sExecute? [y/N]: %s%s", colorYellow, m.confirmText, colorReset))
 	case tuiSearch:
 		col = displayWidth(m.searchPrompt()) + runeSliceLen(m.input)
 	case tuiModelMenu:
@@ -473,22 +624,20 @@ func (m tuiModel) renderView() tea.View {
 	y := m.inputRow()
 	switch m.state {
 	case tuiModelMenu:
-		// Menu rows replace the input line; place the cursor on the selected
-		// entry (1 = the title row).
-		y = m.inputRow() + 1 + m.modelIdx
+		// Строки меню занимают место строки ввода, поэтому курсор встаёт на
+		// выделенный пункт. Позиция считается той же раскладкой, что и клик:
+		// со строкой фильтра и со скроллом список смещается, и «+1» тут
+		// было бы ошибкой.
+		_, first := m.menuRows()
+		start, _ := m.menuWindow()
+		y = m.inputRow() + first + m.modelIdx - start
 		if m.height > 1 && y > m.height-2 {
 			y = m.height - 2
 		}
-	case tuiConfirming, tuiSearch:
-		// Confirming/search rows live inside the scrollback; step back to the
-		// wrapped block that contains the current cursor row.
-		line := ""
-		if m.state == tuiConfirming {
-			line = fmt.Sprintf("%sExecute? [y/N]: %s%s", colorYellow, m.confirmText, colorReset)
-		} else {
-			line = m.searchPrompt() + colorGreen + m.input
-		}
-		y -= len(hardWrap(line, m.width))
+	case tuiSearch:
+		// Строка поиска живёт в скроллбеке: вернуться к блоку, который её
+		// содержит.
+		y -= len(hardWrap(m.searchPrompt()+colorGreen+m.input, m.width))
 		if y < 0 {
 			y = 0
 		}
@@ -539,8 +688,6 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 		}
 	}
 	switch m.state {
-	case tuiConfirming:
-		fmt.Fprintf(&body, "%sExecute? [y/N]: %s%s\n", colorYellow, m.confirmText, colorReset)
 	case tuiSearch:
 		body.WriteString(m.searchPrompt() + colorGreen + m.input + "\n")
 	}
@@ -555,17 +702,22 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 
 	switch m.state {
 	case tuiModelMenu:
-		inRows = m.menuRows()
+		inRows, _ = m.menuRows()
 	case tuiConfirming, tuiSearch:
-		// Обе строки живут в скроллбеке, отдельной строки ввода нет.
+		// Обе строки живут в скроллбеке, отдельной строки ввода нет: у
+		// подтверждения вместо неё окно с кнопками.
 	default:
 		inRows = hardWrap(m.buildPrompt()+m.input, m.width)
+		if m.showActionBar() {
+			inRows = append(inRows, fitWidth(m.actionBarRow(), m.width))
+		}
 		if m.streaming {
 			inRows = hardWrap(fmt.Sprintf("%s[dmsh] thinking…%s", colorCyan, colorReset), m.width)
 		} else if m.running {
-			// Команда выполняется в фоне: ввод свободен, виден прогресс.
-			inRows = append(inRows, hardWrap(fmt.Sprintf("%s… running %s (Esc cancels)%s",
-				colorYellow, shortCmd(m.cmdCommand), colorReset), m.width)...)
+			// Команда выполняется в фоне: ввод свободен, видно, что она идёт
+			// и сколько уже идёт, а её вывод печатается выше по мере
+			// поступления.
+			inRows = append(inRows, hardWrap(m.runningLine(), m.width)...)
 		}
 		// Slash-command menu with descriptions while typing "/".
 		const maxVisible = 8
@@ -651,20 +803,33 @@ func (m tuiModel) render() string {
 	return strings.Join(frame, "\n")
 }
 
-// modal возвращает содержимое открытого модального окна.
+// modal возвращает содержимое открытого модального окна. Пустой заголовок
+// означает «окна нет».
 func (m tuiModel) modal() (modalBox, bool) {
+	box := m.modalBox()
+	return box, box.title != ""
+}
+
+// modalBox — то же окно, но без признака «открыто»: пустой заголовок значит,
+// что окна нет.
+func (m tuiModel) modalBox() modalBox {
 	switch m.state {
 	case tuiPalette:
-		return m.paletteModal(), true
+		return m.paletteModal()
 	case tuiSettings:
-		return m.settingsModal(), true
+		return m.settingsModal()
 	case tuiSetup:
-		return m.setupModal(), true
+		return m.setupModal()
 	case tuiModeMenu:
-		return m.modeMenuModal(), true
-	default:
-		return modalBox{}, false
+		return m.modeMenuModal()
+	case tuiDirMenu:
+		return m.dirMenuModal()
+	case tuiConfirming:
+		return m.confirmModal()
+	case tuiTodoMenu:
+		return m.todoModal()
 	}
+	return modalBox{}
 }
 
 // renderFrame рисует всё, кроме модального окна: скроллбек, строку ввода и
@@ -711,31 +876,63 @@ func (m tuiModel) renderFrame() []string {
 		frame = append(frame, "")
 	}
 	frame = append(frame, status)
-	return frame
+	// Полоса живёт поверх транскрипта: она нужна ровно тогда, когда вывод не
+	// помещается, и её ширина в одну колонку платится только в этом случае.
+	return m.withScrollbar(frame, len(visible))
+}
+
+// statusDirLabel — текущая папка в квадратных скобках в начале статусной
+// строки. Это же и текст, по которому кликают мышью: отдельная копия пути
+// в обработчике клика рано или поздно разошлась бы с нарисованной.
+func statusDirLabel() string {
+	wd, _ := os.Getwd()
+	return "[" + shortPath(wd) + "]"
+}
+
+// statusSegments собирает статусную строку из кусочков, у каждого которых
+// есть действие клика. Отрисовка и попадание клика идут по одному списку:
+// иначе кнопка и её границы рано или поздно разъедутся.
+func (m tuiModel) statusSegments() (left, right []statusSegment) {
+	left = []statusSegment{
+		{text: colorCyan + statusDirLabel() + colorReset, act: clickOpenDir},
+		{text: " "},
+		{text: colorYellow + "mode:" + m.modeLabel + colorReset, act: clickOpenModeMenu},
+		{text: "  "},
+		{text: colorCyan + "model:" + m.modelLabel() + colorReset, act: clickOpenModelMenu},
+		{text: "  "},
+		{text: gray + m.proxyLabel() + colorReset, act: clickOpenSettings},
+	}
+	right = []statusSegment{
+		{text: colorGray + "help" + colorReset, act: clickShowHelp},
+		{text: " "},
+		{text: gray + "F1"},
+		{text: "   "},
+		{text: colorGray + "palette" + colorReset, act: clickOpenPalette},
+		{text: " "},
+		{text: gray + "Ctrl+P"},
+		{text: "   "},
+		{text: colorGray + "mode" + colorReset, act: clickCycleMode},
+		{text: " "},
+		{text: gray + "Shift+Tab"},
+	}
+	return left, right
+}
+
+// statusLine собирает строку целиком: слева состояние, справа подсказки, между
+// ними — пустое место до края терминала.
+func (m tuiModel) statusLine() string {
+	left, right := m.statusSegments()
+	ls, rs := segmentsWidth(left), segmentsWidth(right)
+	pad := m.width - ls - rs
+	sep := " "
+	if pad >= 1 {
+		sep = strings.Repeat(" ", pad)
+	}
+	return segmentsText(left) + sep + segmentsText(right)
 }
 
 func (m tuiModel) statusline() string {
-	short, _ := os.Getwd()
-	shortName := shortPath(short)
-	left := fmt.Sprintf("%s[%s]%s mode:%s%s%s  model:%s%s  %s",
-		colorCyan, shortName, colorReset,
-		colorYellow, m.modeLabel, colorReset,
-		gray, m.modelLabel(), m.proxyLabel())
-	right := fmt.Sprintf("%shelp%s %sF1%s   %spalette%s %sCtrl+P%s   %smode%s %sShift+Tab%s",
-		colorGray, colorReset, colorGray, colorReset,
-		colorGray, colorReset, colorGray, colorReset,
-		colorGray, colorReset, colorGray, colorReset)
-	ls := displayWidth(left)
-	rs := displayWidth(right)
-	pad := 0
-	if m.width > ls+rs {
-		pad = m.width - ls - rs
-	}
-	sep := strings.Repeat(" ", pad)
-	if pad < 1 {
-		sep = " "
-	}
-	return left + sep + right
+	return fitWidth(m.statusLine(), m.width)
 }
 
 // proxyLabel показывает, пойдёт ли ближайший сетевой запрос через прокси.
@@ -782,13 +979,30 @@ func (m tuiModel) buildPrompt() string {
 	return fmt.Sprintf("%s[%s]%s > %s", colorGray, short, colorReset, colorReset)
 }
 
-func (m *tuiModel) addLine(text string) {
-	m.content = appendLine(m.content, text)
+// runningLine — строка «идёт команда». Одна на экран: и раскладка, и поиск
+// кликабельной подсказки «↓N» считают её отсюда.
+func (m tuiModel) runningLine() string {
+	line := fmt.Sprintf("%s… running %s (%s", colorYellow, shortCmd(m.cmdCommand), m.cmdElapsed())
+	if m.scrollOffset > 0 {
+		// Пользователь ушёл читать выше, а лог растёт: сколько строк внизу —
+		// это ровно scrollOffset, и клик по подсказке возвращает в конец.
+		line += fmt.Sprintf(", %s↓%d below%s", colorCyan, m.scrollOffset, colorReset)
+	}
+	return line + ", Esc cancels)" + colorReset
 }
 
+// addLine печатает строку в транскрипт.
+func (m *tuiModel) addLine(text string) {
+	m.content = appendLine(m.content, text)
+	m.countScrollback(1)
+}
+
+// clearContent очищает транскрипт: счётчик строк тоже сбрасывается, иначе
+// следующая же обрезка снесла бы половину свежего экрана.
 func (m *tuiModel) clearContent() {
 	m.content = ""
 	m.scrollOffset = 0
+	m.scrollbackLines = 0
 }
 
 func (m *tuiModel) scrollUp() {
@@ -813,11 +1027,6 @@ func appendLine(content, text string) string {
 		content += "\n"
 	}
 	return content + text + "\n"
-}
-
-func appendStream(content, text string) string {
-	content += text
-	return content
 }
 
 func displayWidth(s string) int {
@@ -902,6 +1111,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.state == tuiModeMenu {
 		return m.handleModeMenuKey(msg)
+	}
+	if m.state == tuiDirMenu {
+		return m.handleDirMenuKey(msg)
+	}
+	if m.state == tuiTodoMenu {
+		return m.handleTodoMenuKey(msg)
 	}
 	if m.state == tuiTerminal {
 		return m.handleTerminalKey(msg)
@@ -1359,10 +1574,12 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 	case line == "/setup":
 		return m.openSetup(), nil
 	case line == "/todo", line == "todo":
-		m.showTodo()
+		return m.openTodoMenu(), nil
 	case strings.HasPrefix(line, "/todo "):
 		handleTodo(strings.TrimSpace(strings.TrimPrefix(line, "/todo ")), io.Discard, m.s)
-		m.showTodo()
+		m.addLine(fmt.Sprintf("%s=== todo (%d open) ===%s",
+			colorBold+colorCyan, todoOpenCount(m), colorReset))
+		return m.openTodoMenu(), nil
 	case line == "/retry":
 		lastInput := m.s.lastRequest()
 		if lastInput == "" {
@@ -1399,6 +1616,9 @@ func (m tuiModel) submitToLLM(input string) (tea.Model, tea.Cmd) {
 // Для уточнений это разные строки: модели уходит вопрос с ответом, а
 // пользователю — только его ответ.
 func (m tuiModel) submitToLLMEcho(send, echo string) (tea.Model, tea.Cmd) {
+	// Новый запрос — новый контекст: панель «что делать дальше» относится к
+	// предыдущей команде и в середине нового разговора только сбивает.
+	m.actionCmd = ""
 	// Echo the request into the transcript so it does not vanish when the
 	// input line is cleared on enter.
 	m.addLine(fmt.Sprintf("%s> %s%s", colorGray, echo, colorReset))
@@ -1458,11 +1678,8 @@ func (m tuiModel) executeResponse(resp prompt.Response) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {
-		m.state = tuiConfirming
-		m.pendingResp = resp
-		m.confirmText = ""
-		m.confirmOK = nil
-		return m, nil
+		lite := policyDecisionLite{allowed: dec.Allowed, risk: dec.Risk, reason: dec.Reason}
+		return m.openConfirm(resp, lite), nil
 	}
 	return m.runCommand(resp)
 }
@@ -1485,15 +1702,13 @@ func (m tuiModel) runCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 	return m.startBackgroundCommand(resp)
 }
 
-// startBackgroundCommand запускает команду LLM в фоне через tea.Cmd.
+// startBackgroundCommand запускает команду LLM в фоне через горутину.
 // Синхронного executor.Run здесь больше нет: раньше Update висел на нём,
-// и весь интерфейс замирал до конца команды.
+// и весь интерфейс замирал до конца команды. Вывод приходит кусками, пока
+// команда пишет, — отмена — Esc/Ctrl+C.
 func (m tuiModel) startBackgroundCommand(resp prompt.Response) (tuiModel, tea.Cmd) {
 	m.cancelCommand()
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cmdCancel = cancel
 	m.cmdSeq++
-	seq := m.cmdSeq
 	m.cmdCommand = resp.Command
 	m.cmdStartedAt = time.Now()
 	m.running = true
@@ -1502,19 +1717,72 @@ func (m tuiModel) startBackgroundCommand(resp prompt.Response) (tuiModel, tea.Cm
 	lite := policyDecisionLite{allowed: dec.Allowed, risk: dec.Risk, reason: dec.Reason}
 	shell := m.rf.cfg.Shell
 	command := resp.Command
-	m.addLine(fmt.Sprintf("%srunning in background — Esc cancels%s", colorGray, colorReset))
-	return m, func() tea.Msg {
-		res := executor.Run(ctx, shell, command)
+	m.addLine(fmt.Sprintf("%srunning in background — output appears as it comes, Esc cancels%s", colorGray, colorReset))
+	seq := m.cmdSeq
+	m.startBackgroundCmd(shell, command, func(res executor.Result) tea.Msg {
 		return cmdDoneMsg{seq: seq, resp: resp, res: res, dec: lite}
-	}
+	})
+	return m, m.cmdPump()
 }
 
-// cancelCommand останавливает фоновую команду, если она идёт.
+// cmdPump держит очередь фоновой команды: каждое принятое сообщение требует
+// следующего ожидания, иначе вывод перестанет приходить на середине.
+func (m tuiModel) cmdPump() tea.Cmd {
+	if m.cmdCh == nil {
+		return nil
+	}
+	return waitForCmd(m.cmdCh)
+}
+
+// appendCmdOutput печатает кусок живого вывода. Позиция скролла не
+// трогается: если пользователь ушёл читать выше, новые строки не должны
+// выбрасывать его вниз.
+func (m tuiModel) appendCmdOutput(msg cmdOutMsg) (tea.Model, tea.Cmd) {
+	if m.cmdCh == nil {
+		return m, nil
+	}
+	if msg.seq == m.cmdSeq && m.running {
+		switch {
+		case m.cmdTrunc:
+			// Вывод уже обрезан: дальше только качаем очередь, иначе
+			// процесс встанет на переполненном канале.
+		case m.cmdLive+len(msg.text) > maxLiveOutput:
+			m.cmdTrunc = true
+			m.addLine(fmt.Sprintf("%s(live output cut after %d KB — the full text stays in the audit log)%s",
+				colorGray, maxLiveOutput/1024, colorReset))
+		default:
+			m.cmdLive += len(msg.text)
+			if msg.isErr {
+				m.appendLive(colorRed + msg.text + colorReset)
+			} else {
+				m.appendLive(msg.text)
+			}
+		}
+	}
+	return m, m.cmdPump()
+}
+
+// maxLiveOutput ограничивает живой вывод в транскрипте: лог сборки может
+// занимать мегабайты, а кадр перерисовывается целиком на каждом тике.
+const maxLiveOutput = 64 * 1024
+
+// cmdElapsed — сколько команда идёт, для строки ввода.
+func (m tuiModel) cmdElapsed() string {
+	if m.cmdStartedAt.IsZero() {
+		return "0s"
+	}
+	return time.Since(m.cmdStartedAt).Round(time.Second).String()
+}
+
+// cancelCommand останавливает фоновую команду, если она идёт. Канал
+// отпускается вместе с ней: куски вывода уже некуда принимать, а процесс
+// увидит отмену и перестанет писать.
 func (m *tuiModel) cancelCommand() {
 	if m.cmdCancel != nil {
 		m.cmdCancel()
 		m.cmdCancel = nil
 	}
+	m.cmdCh = nil
 	m.running = false
 }
 
@@ -1524,16 +1792,23 @@ func (m tuiModel) finishBackgroundCommand(msg cmdDoneMsg) (tuiModel, tea.Cmd) {
 	if msg.seq != m.cmdSeq {
 		return m, nil
 	}
+	// Показанное живьём печатать второй раз незачем, а для длинного лога это
+	// просто удвоенный транскрипт. Решение принимаем до cancelCommand: тот
+	// обнуляет счётчики живого вывода.
+	streamed := m.cmdLive > 0 || m.cmdTrunc
 	m.cancelCommand()
 	m.state = tuiIdle
 	elapsed := time.Since(m.cmdStartedAt).Round(time.Second)
 	m.s.addRecentAndHistory(msg.resp.Command, "llm")
 	m.s.audit(msg.resp.Command, "llm", restoreDecision(msg.dec), msg.res)
-	if msg.res.Stdout != "" {
-		m.addLine(msg.res.Stdout)
-	}
-	if msg.res.Stderr != "" {
-		m.addLine(fmt.Sprintf("%s%s%s", colorRed, msg.res.Stderr, colorReset))
+	m.actionCmd = msg.resp.Command
+	if !streamed {
+		if msg.res.Stdout != "" {
+			m.addLine(msg.res.Stdout)
+		}
+		if msg.res.Stderr != "" {
+			m.addLine(fmt.Sprintf("%s%s%s", colorRed, msg.res.Stderr, colorReset))
+		}
 	}
 	if msg.res.Err != nil && msg.res.ExitCode != 0 {
 		m.addLine(fmt.Sprintf("%sexit %d after %s%s", colorGray, msg.res.ExitCode, elapsed, colorReset))
@@ -1593,36 +1868,6 @@ func (m tuiModel) autoCorrect(resp prompt.Response, res executor.Result) (tuiMod
 	return m.startLLMStream("run", correctionInput)
 }
 
-func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	confirmed := false
-	switch msg.String() {
-	case "y", "Y", "yes":
-		confirmed = true
-		m.state = tuiIdle
-	case "n", "N", "no", "enter":
-		confirmed = false
-		m.state = tuiIdle
-	case "ctrl+c", "esc":
-		confirmed = false
-		m.state = tuiIdle
-		m.input = ""
-		m.cursorPos = 0
-	default:
-		return m, nil
-	}
-	if m.confirmOK != nil {
-		m.confirmOK(confirmed)
-		m.confirmOK = nil
-	}
-	if confirmed && m.pendingResp.Intent == prompt.IntentRunCommand {
-		return m.runCommand(m.pendingResp)
-	}
-	if !confirmed {
-		m.addLine("(cancelled)")
-	}
-	return m, nil
-}
-
 func (m tuiModel) handleQuestionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEnter {
 		answer := strings.TrimSpace(stripListMarker(m.input))
@@ -1673,21 +1918,18 @@ func (m tuiModel) startDirectCommand(cmd string) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	m.cancelCommand()
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cmdCancel = cancel
 	m.cmdSeq++
-	seq := m.cmdSeq
 	m.cmdCommand = cmd
 	m.cmdStartedAt = time.Now()
 	m.running = true
 	m.state = tuiRunning
 	shell := m.rf.cfg.Shell
-	m.addLine(fmt.Sprintf("%srunning in background — Esc cancels%s", colorGray, colorReset))
-	return m, func() tea.Msg {
-		// Прямые команды интерактивные: вывод идёт пользователю напрямую.
-		res := executor.Run(ctx, shell, cmd)
+	m.addLine(fmt.Sprintf("%srunning in background — output appears as it comes, Esc cancels%s", colorGray, colorReset))
+	seq := m.cmdSeq
+	m.startBackgroundCmd(shell, cmd, func(res executor.Result) tea.Msg {
 		return directDoneMsg{seq: seq, cmd: cmd, res: res}
-	}
+	})
+	return m, m.cmdPump()
 }
 
 // finishDirectCommand печатает результат фоновой "!"-команды.
@@ -1695,16 +1937,22 @@ func (m tuiModel) finishDirectCommand(msg directDoneMsg) (tuiModel, tea.Cmd) {
 	if msg.seq != m.cmdSeq {
 		return m, nil
 	}
+	// Как и у команды LLM: живой вывод уже в транскрипте, второй раз не
+	// печатаем. Счётчики смотрим до cancelCommand.
+	streamed := m.cmdLive > 0 || m.cmdTrunc
 	m.cancelCommand()
 	m.state = tuiIdle
 	elapsed := time.Since(m.cmdStartedAt).Round(time.Second)
 	m.s.addRecentAndHistory(msg.cmd, "direct")
 	m.s.audit(msg.cmd, "direct", directDecision(), msg.res)
-	if msg.res.Stdout != "" {
-		m.addLine(msg.res.Stdout)
-	}
-	if msg.res.Stderr != "" {
-		m.addLine(fmt.Sprintf("%s%s%s", colorRed, msg.res.Stderr, colorReset))
+	m.actionCmd = msg.cmd
+	if !streamed {
+		if msg.res.Stdout != "" {
+			m.addLine(msg.res.Stdout)
+		}
+		if msg.res.Stderr != "" {
+			m.addLine(fmt.Sprintf("%s%s%s", colorRed, msg.res.Stderr, colorReset))
+		}
 	}
 	if msg.res.Err != nil {
 		m.addLine(fmt.Sprintf("%sexit %d: %v%s", colorRed, msg.res.ExitCode, msg.res.Err, colorReset))
@@ -1862,6 +2110,7 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("%sCommands:%s", colorBold, colorReset))
 	m.addLine(fmt.Sprintf("  %s!cmd%s         — run shell command directly", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/cd%s path     — change directory", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/todo%s        — the model's task list; click a task to toggle it", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/pwd%s         — current directory", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))
@@ -1888,6 +2137,11 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sCtrl+W%s         — delete word back", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+L%s         — clear screen", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+O%s         — model menu (install / switch)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("%sMouse:%s click the folder / mode / model / proxy in the status line, or a row in any window — it does what Enter does (turn off with %s--mouse=false%s)",
+		colorBold, colorReset, colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %swheel%s           - scroll output, and the list in a window", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sscrollbar%s        - click the right edge to jump through the history", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s[ retry ]%s        - buttons under the answer: retry, explain, shell", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sTab%s            — complete slash command", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sShift+Tab%s      — cycle modes (ai → help → terminal)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s↑/↓%s            — previous / next command from history", colorYellow, colorReset))

@@ -42,7 +42,10 @@ func frameBoxLines(box modalBox, width int) ([]string, int, int) {
 	frame := content + modalBorder
 
 	lines := make([]string, 0, len(box.rows)+2)
-	top := "┌─ " + box.title + " "
+	// Заголовок может оказаться шире окна (например, полный путь в окне
+	// выбора папки). Обрезаем его сам, иначе верхняя сторона вылезет за
+	// терминал и разъедет кадр по колонкам.
+	top := fitWidth("┌─ "+box.title+" ", frame-2)
 	lines = append(lines, colorCyan+top+strings.Repeat("─", max(0, frame-displayWidth(top)-1))+"┐"+colorReset)
 	for i, row := range box.rows {
 		padded := fitWidth(row, content)
@@ -62,6 +65,21 @@ func frameBoxLines(box modalBox, width int) ([]string, int, int) {
 	return lines, 2 + box.cursorX, 1 + box.cursorY
 }
 
+// modalOrigin — левый верхний угол окна в кадре: по центру, но не выходя за
+// терминал. Отрисовка и попадание клика считают его одинаково, иначе клик по
+// строке вёл бы в соседнее окно.
+func modalOrigin(boxW, boxH, width, height int) (x, y int) {
+	if width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	x = max(0, (width-boxW)/2)
+	if x+boxW > width {
+		x = max(0, width-boxW)
+	}
+	y = max(0, (height-boxH)/2)
+	return x, y
+}
+
 // overlayModal размещает окно по центру кадра. Возвращает новый кадр и
 // позицию курсора в его координатах.
 func overlayModal(frame []string, box modalBox, width, height int) ([]string, int, int) {
@@ -72,11 +90,7 @@ func overlayModal(frame []string, box modalBox, width, height int) ([]string, in
 	boxW := displayWidth(lines[0])
 	boxH := len(lines)
 
-	originX := max(0, (width-boxW)/2)
-	if originX+boxW > width {
-		originX = max(0, width-boxW)
-	}
-	originY := max(0, (height-boxH)/2)
+	originX, originY := modalOrigin(boxW, boxH, width, height)
 
 	out := make([]string, len(frame))
 	copy(out, frame)

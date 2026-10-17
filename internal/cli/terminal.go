@@ -343,3 +343,67 @@ func (m tuiModel) terminalCursor() (tea.Position, bool) {
 	x, y := m.term.screen.Cursor()
 	return tea.Position{X: x, Y: y}, true
 }
+
+// terminalOrigin — левый верхний угол экрана терминала в кадре. Считается той
+// же арифметикой, что и renderFrame: строки терминала занимают блок
+// скроллбека, и расхождение сдвинуло бы клик на другую строку оболочки.
+func (m tuiModel) terminalOrigin() (x, y int) {
+	if m.height <= 0 {
+		return 0, 0
+	}
+	avail := m.height - 1
+	total := len(m.terminalRows())
+	start := total - avail - m.scrollOffset
+	if start < 0 {
+		start = 0
+	}
+	return 0, start
+}
+
+// mouseMode терминала — то, что просит программа внутри псевдотерминала.
+// Пока она молчит, мышь остаётся у интерфейса dmsh.
+func (m tuiModel) terminalMouseMode() vt.MouseMode {
+	if m.term == nil || m.state != tuiTerminal {
+		return vt.MouseMode{}
+	}
+	return m.term.screen.MouseMode()
+}
+
+// forwardMouse пересылает событие мыши в псевдотерминал. Нажатия dmsh не
+// выполняет: пока программа внутри окна не включила мышь, клики остаются у
+// интерфейса, а включила — значит, хочет их сама.
+func (m tuiModel) forwardMouse(ev vt.MouseEvent) {
+	if m.term == nil || m.term.term == nil {
+		return
+	}
+	data := vt.EncodeMouse(m.terminalMouseMode(), ev)
+	if len(data) == 0 {
+		return
+	}
+	_, _ = m.term.term.Write(data)
+}
+
+// mouseEvent переводит событие bubbletea в координаты псевдотерминала.
+func (m tuiModel) mouseEvent(action vt.MouseAction, button vt.MouseButton, mod tea.KeyMod, x, y int) vt.MouseEvent {
+	ox, oy := m.terminalOrigin()
+	return vt.MouseEvent{
+		Action: action,
+		Button: button,
+		Shift:  mod&tea.ModShift != 0,
+		Alt:    mod&tea.ModAlt != 0,
+		Ctrl:   mod&tea.ModCtrl != 0,
+		Col:    x - ox + 1,
+		Row:    y - oy + 1,
+	}
+}
+
+// inTerminalScreen сообщает, попал ли клик в экран терминала, а не в строку
+// состояния или в поля вокруг него.
+func (m tuiModel) inTerminalScreen(x, y int) bool {
+	if m.term == nil || m.term.screen == nil {
+		return false
+	}
+	ox, oy := m.terminalOrigin()
+	cols, rows := m.term.screen.Size()
+	return x >= ox && x < ox+cols && y >= oy && y < oy+rows
+}

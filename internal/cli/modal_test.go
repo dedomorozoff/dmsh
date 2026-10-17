@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/bubbletea/v2"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 )
 
 // Рамка модального окна должна быть одной ширины во всех строках и не
@@ -23,6 +24,15 @@ func modalCases() []struct {
 		{"settings", func(m tuiModel) tuiModel { return m.openSettings() }},
 		{"setup", func(m tuiModel) tuiModel { return m.openSetup() }},
 		{"mode", func(m tuiModel) tuiModel { return m.openModeMenu() }},
+		{"dirs", func(m tuiModel) tuiModel { return m.openDirMenu() }},
+		{"confirm", func(m tuiModel) tuiModel {
+			return m.openConfirm(
+				prompt.Response{Intent: prompt.IntentRunCommand, Command: "rm -rf /tmp/dmsh-test", Risk: prompt.RiskHigh},
+				policyDecisionLite{risk: prompt.RiskHigh, reason: "matched a danger pattern: recursive delete"},
+			)
+		}},
+		{"todo", func(m tuiModel) tuiModel { return m.openTodoMenu() }},
+		{"todo filled", func(m tuiModel) tuiModel { return todoTuiWithTasks(3).openTodoMenu() }},
 	}
 }
 
@@ -42,6 +52,27 @@ func TestModalBoxRowsShareWidth(t *testing.T) {
 			}
 			if want > width {
 				t.Fatalf("%s at width=%d: box is %d wide, want <= %d", tc.name, width, want, width)
+			}
+		}
+	}
+}
+
+// Заголовок шире окна должен обрезаться, а не выталкивать верхнюю сторону за
+// терминал: длинный путь в заголовке — обычное дело для окна выбора папки.
+func TestModalBoxTruncatesLongTitle(t *testing.T) {
+	for _, width := range []int{20, 40, 80} {
+		box := modalBox{
+			title: "cd: " + strings.Repeat("very/long/path/", 6),
+			rows:  []string{"alpha", "beta"},
+		}
+		rendered, _, _ := frameBoxLines(box, width)
+		want := displayWidth(rendered[0])
+		if want > width {
+			t.Fatalf("at width=%d: box is %d wide", width, want)
+		}
+		for i, row := range rendered {
+			if got := displayWidth(row); got != want {
+				t.Fatalf("at width=%d: line %d is %d wide, want %d", width, i, got, want)
 			}
 		}
 	}

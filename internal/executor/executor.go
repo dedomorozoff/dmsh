@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -73,6 +74,49 @@ func Run(ctx context.Context, shell, command string) Result {
 	}
 }
 
+// RunStream выполняет команду и отдаёт её вывод через onOut порциями, пока
+// процесс пишет, — так фоновую команду видно в момент работы, а не после.
+// Итоговый Result остаётся полным: аудит, разбор ошибки и автокоррекция
+// читают его целиком, поэтому отдача наружу ничего не теряет.
+//
+// onOut вызывается из горутин, которые читают stdout и stderr, и обязан
+// возвращаться быстро: пока он не вернулся, процесс не пишет дальше. Это
+// осознанное ограничение — буфер в памяти рос бы вместе с логом сборки.
+func RunStream(ctx context.Context, shell, command string, onOut func(text string, stderr bool)) Result {
+	if strings.TrimSpace(command) == "" {
+		return Result{ExitCode: -1, Err: errEmpty}
+	}
+	cmd := prepareCommand(ctx, shell, command)
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if onOut != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, writerFunc(func(p []byte) (int, error) {
+			onOut(string(p), false)
+			return len(p), nil
+		}))
+		cmd.Stderr = io.MultiWriter(&stderr, writerFunc(func(p []byte) (int, error) {
+			onOut(string(p), true)
+			return len(p), nil
+		}))
+	}
+
+	err := cmd.Run()
+	return Result{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Err:      err,
+		ExitCode: exitCode(cmd, err),
+	}
+}
+
+// writerFunc превращает функцию в io.Writer — так MultiWriter получает
+// tee-ветку без отдельного типа на каждый случай.
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
 // shellArgs подбирает интерпретатор и флаг для одиночной команды.
 func shellArgs(shell string) []string {
 	if shell == "" {
@@ -97,4 +141,3 @@ type errEmptyCommand struct{}
 func (errEmptyCommand) Error() string { return "empty command" }
 
 var errEmpty = errEmptyCommand{}
-

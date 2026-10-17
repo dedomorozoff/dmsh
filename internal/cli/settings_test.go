@@ -17,7 +17,7 @@ import (
 // newSettingsTui — модель с удалённым провайдером: применение настроек
 // пересобирает сетевой движок, и локальная модель в тесте была бы лишней.
 func newSettingsTui() tuiModel {
-	rf := &rootFlags{cfg: config.Config{Provider: config.ProviderPollinations, Mode: config.ModeAI}}
+	rf := &rootFlags{cfg: config.Config{Provider: config.ProviderPollinations, Mode: config.ModeAI, Mouse: true}}
 	s := &session{cfg: rf.cfg, provider: config.ProviderPollinations, engine: &captureEngine{}}
 	m := NewTuiModel(rf, s).(tuiModel)
 	return m.openSettings()

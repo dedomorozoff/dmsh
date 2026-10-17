@@ -67,6 +67,7 @@ func newConfigCmd() *cobra.Command {
 			fmt.Fprintf(out, "  %-20s %v\n", "history_file:", cfg.HistoryFile)
 			fmt.Fprintf(out, "  %-20s %v\n", "dry_run:", cfg.DryRun)
 			fmt.Fprintf(out, "  %-20s %v\n", "mode:", cfg.Mode)
+			fmt.Fprintf(out, "  %-20s %v\n", "mouse:", cfg.Mouse)
 
 			if len(cfg.DangerPatterns) > 0 {
 				fmt.Fprintln(out, "  danger_patterns:")
@@ -212,6 +213,12 @@ func newConfigCmd() *cobra.Command {
 					return fmt.Errorf("invalid mode %q, allowed: ai, help, shell", val)
 				}
 				cfg.Mode = m
+			case "mouse":
+				v, err := strconv.ParseBool(val)
+				if err != nil {
+					return fmt.Errorf("invalid bool value for mouse: %w", err)
+				}
+				cfg.Mouse = v
 			case "dangerpatterns":
 				// Split by comma if multiple values, otherwise assign single
 				if val == "" {

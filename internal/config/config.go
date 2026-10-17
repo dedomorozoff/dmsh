@@ -115,6 +115,12 @@ type Config struct {
 	Allowlist          []string          `json:"allowlist,omitempty"`
 	Aliases            map[string]string `json:"aliases,omitempty"`
 
+	// Mouse — мышь в TUI: клик по папке в статусной строке открывает выбор
+	// каталога. Выключается, когда нужно штатное выделение текста в
+	// терминале: пока мышь включена, терминал отправляет события мыши
+	// приложению вместо собственного выделения.
+	Mouse bool `json:"mouse"`
+
 	// Сеть: прокси применяется ко всем удалённым запросам (LLM-API,
 	// websearch, скачивание GGUF). Поля плоские — так же, как остальные,
 	// чтобы их легко было задать флагом или из JSON.
@@ -254,6 +260,7 @@ func Default() Config {
 		DryRun:       false,
 		ToolsEnabled: true,
 		Mode:         ModeAI,
+		Mouse:        true,
 		ProxyMode:    netproxy.ModeAuto,
 		ProxyProto:   netproxy.ProtoHTTP,
 	}

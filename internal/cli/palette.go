@@ -32,7 +32,7 @@ var paletteItems = []paletteItem{
 	{name: "/model", desc: "show the current model"},
 	{name: "/models", label: "models: pick, install or switch", desc: "model menu: local .gguf files or the provider's live catalog"},
 	{name: "/settings", label: "settings: proxy and endpoint", desc: "network settings: proxy mode, address, bypass list, connection test"},
-	{name: "/todo", desc: "show the model's task list"},
+	{name: "/todo", label: "todo: the model's task list", desc: "open the list; click or Enter a task to toggle it done"},
 	{name: "/stats", desc: "session statistics"},
 	{name: "/history", desc: "recent commands"},
 	{name: "/retry", desc: "retry the last request"},
@@ -106,11 +106,16 @@ func containsAny(list []string, q string) bool {
 // paletteTitle печатается в рамке модального окна.
 const paletteTitle = "command palette"
 
-// paletteModal описывает палитру для рендера: заголовок, строка запроса,
-// отфильтрованные команды и подсказка. Курсор стоит на строке запроса —
-// запрос живёт в обычной строке ввода, поэтому его правка выглядит как
-// обычный ввод, просто в рамке.
-func (m tuiModel) paletteModal() modalBox {
+// paletteLayout — строки панели вместе с раскладкой: полуинтервал показанных
+// пунктов и номер строки первого из них. По этим числам считаются и выделение,
+// и попадание клика, иначе они разъедутся.
+type paletteLayoutData struct {
+	rows        []string
+	start, end  int
+	firstRowIdx int
+}
+
+func (m tuiModel) paletteLayout() paletteLayoutData {
 	items := paletteMatches(m.input)
 
 	// Окно списка едет за выделением: иначе палитра из двадцати пунктов
@@ -120,7 +125,8 @@ func (m tuiModel) paletteModal() modalBox {
 
 	rows := make([]string, 0, end-start+3)
 	rows = append(rows, m.paletteHeader(items, start, end, maxVisible))
-	rows = append(rows, fitWidth(fmt.Sprintf("%s%2s%s%s", colorCyan, ">", colorGreen, m.input)+colorReset, m.width))
+	rows = append(rows, fitWidth(fmt.Sprintf("%s%2s%s%s%s", colorCyan, ">", colorGreen, m.input, colorReset), m.width))
+	first := len(rows)
 
 	if len(items) == 0 {
 		rows = append(rows, colorGray+"no matching command"+colorReset)
@@ -135,9 +141,17 @@ func (m tuiModel) paletteModal() modalBox {
 		rows = append(rows, fitWidth(fmt.Sprintf("%s%s%s%s %s— %s%s",
 			style, marker, it.paletteDisplay(), colorReset, descStyle, it.desc, colorReset), m.width))
 	}
+	return paletteLayoutData{rows: rows, start: start, end: end, firstRowIdx: first}
+}
 
+// paletteModal описывает палитру для рендера: заголовок, строка запроса,
+// отфильтрованные команды и подсказка. Курсор стоит на строке запроса —
+// запрос живёт в обычной строке ввода, поэтому его правка выглядит как
+// обычный ввод, просто в рамке.
+func (m tuiModel) paletteModal() modalBox {
+	l := m.paletteLayout()
 	cursorX := 2 + displayWidth(string([]rune(m.input)[:min(m.cursorPos, runeSliceLen(m.input))]))
-	return modalBox{title: paletteTitle, rows: rows, cursorX: cursorX, cursorY: 1}
+	return modalBox{title: paletteTitle, rows: l.rows, cursorX: cursorX, cursorY: 1}
 }
 
 // paletteHeader — строка подсказок. Длинный список получает в неё и своё

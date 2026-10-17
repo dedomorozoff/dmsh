@@ -63,12 +63,20 @@ func (s *TodoStore) Add(task string) (TodoItem, error) {
 }
 
 // Done отмечает задачу выполненной по id.
+// Done отмечает задачу выполненной.
 func (s *TodoStore) Done(id int) (TodoItem, bool) {
+	return s.Set(id, true)
+}
+
+// Set меняет состояние задачи. Отдельный метод нужен интерфейсу: отметка
+// «сделано» моделью и снятие её пользователем — разные действия, а иначе
+// ошибочно закрытую задачу нельзя было бы вернуть в работу.
+func (s *TodoStore) Set(id int, done bool) (TodoItem, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.items {
 		if s.items[i].ID == id {
-			s.items[i].Done = true
+			s.items[i].Done = done
 			return s.items[i], true
 		}
 	}

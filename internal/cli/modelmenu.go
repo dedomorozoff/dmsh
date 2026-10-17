@@ -246,23 +246,38 @@ func modelItemNote(it modelMenuItem) string {
 	return size + ram
 }
 
+// menuMaxVisible — сколько моделей помещается в меню. Список едет за
+// выделением через scrollWindow: каталог провайдера длиннее экрана, и
+// выбранная модель обязана быть видна.
+const menuMaxVisible = 10
+
+// menuWindow — полуинтервал показанных моделей. Считается отдельно от
+// отрисовки, но теми же числами: по нему клик сопоставляет строку экрана с
+// моделью.
+func (m tuiModel) menuWindow() (start, end int) {
+	return scrollWindow(m.modelIdx, len(m.visibleModelItems()), menuMaxVisible)
+}
+
 // menuRows — строки, показываемые вместо строки ввода, когда открыто меню.
-func (m tuiModel) menuRows() []string {
+// Второе значение — номер строки первого пункта в срезе. Каждая строка
+// ровно одна, поэтому по этому номеру считаются и выделение, и попадание
+// клика.
+func (m tuiModel) menuRows() ([]string, int) {
 	title := "model menu"
 	items := m.visibleModelItems()
 
 	rows := make([]string, 0, len(items)+3)
-	rows = append(rows, hardWrap(fmt.Sprintf("%s=== %s%s%s (ctrl+o) ===%s",
-		colorBold+colorCyan, title, colorReset, colorGray, colorReset), m.width)...)
+	// Строки меню обрезаются по ширине, а не переносятся: перенос занял бы
+	// две строки и сдвинул бы выделение с кликом на соседний пункт.
+	rows = append(rows, fitWidth(fmt.Sprintf("%s=== %s%s%s (ctrl+o) ===%s",
+		colorBold+colorCyan, title, colorReset, colorGray, colorReset), m.width))
 
 	if m.modelFilter != "" {
-		rows = append(rows, hardWrap(fitWidth(fmt.Sprintf("%sfilter:%s %s",
-			colorGray, colorGreen, m.modelFilter)+colorReset, m.width), m.width)...)
+		rows = append(rows, fitWidth(fmt.Sprintf("%sfilter:%s %s",
+			colorGray, colorGreen, m.modelFilter)+colorReset, m.width))
 	}
-	// Окно едет за выделением: каталог длиннее экрана, и выбранная модель
-	// обязана быть видна.
-	const maxVisible = 10
-	start, end := scrollWindow(m.modelIdx, len(items), maxVisible)
+	first := len(rows)
+	start, end := m.menuWindow()
 	for i := start; i < end; i++ {
 		it := items[i]
 		marker, style := "  ", colorGray
@@ -274,26 +289,26 @@ func (m tuiModel) menuRows() []string {
 			cur = " (current)"
 		}
 		note := modelItemNote(it)
-		rows = append(rows, hardWrap(fitWidth(fmt.Sprintf("%s%s%s%s %s%s%s",
-			style, marker, it.name, colorReset, colorGray, note+cur, colorReset), m.width), m.width)...)
+		rows = append(rows, fitWidth(fmt.Sprintf("%s%s%s%s %s%s%s",
+			style, marker, it.name, colorReset, colorGray, note+cur, colorReset), m.width))
 	}
-	rows = append(rows, m.listFooter(start, end, len(items), maxVisible)...)
+	rows = append(rows, m.listFooter(start, end, len(items), menuMaxVisible)...)
 
 	switch {
 	case m.modelBusy:
 		bar := progressBar(m.modelProgress)
-		rows = append(rows, hardWrap(fmt.Sprintf("%s%s%s %s%s", colorGray, bar, colorReset, m.modelStatus, colorReset), m.width)...)
+		rows = append(rows, fitWidth(fmt.Sprintf("%s%s%s %s%s", colorGray, bar, colorReset, m.modelStatus, colorReset), m.width))
 	case len(items) == 0 && m.modelStatus == "":
-		rows = append(rows, hardWrap(fmt.Sprintf("%snothing found%s", colorGray, colorReset), m.width)...)
+		rows = append(rows, fitWidth(fmt.Sprintf("%snothing found%s", colorGray, colorReset), m.width))
 	default:
 		action := "load/download"
 		if m.remoteMenu() {
 			action = "switch"
 		}
-		rows = append(rows, hardWrap(fmt.Sprintf("%s↑/↓ pick, type to filter, %sEnter%s %s, %sEsc%s close%s",
-			colorGray, colorYellow, colorReset, action, colorYellow, colorReset, colorReset), m.width)...)
+		rows = append(rows, fitWidth(fmt.Sprintf("%s↑/↓ pick, type to filter, %sEnter%s %s, %sEsc%s close%s",
+			colorGray, colorYellow, colorReset, action, colorYellow, colorReset, colorReset), m.width))
 	}
-	return rows
+	return rows, first
 }
 
 func progressBar(pct int) string {

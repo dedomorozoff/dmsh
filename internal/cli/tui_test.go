@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,9 @@ import (
 )
 
 func newTestTui() tuiModel {
-	rf := &rootFlags{cfg: config.Config{Mode: config.ModeAI, ModelPath: "/models/q4.gguf"}}
+	// Mouse включён, как в конфиге по умолчанию: клик по папке в статусной
+	// строке — часть интерфейса, а не отдельный режим.
+	rf := &rootFlags{cfg: config.Config{Mode: config.ModeAI, ModelPath: "/models/q4.gguf", Mouse: true}}
 	// Движок задаётся сразу: handleEnter и autoCorrect запускают стрим в
 	// фоне, и без него тестовая горутина падает на nil после возврата.
 	return NewTuiModel(rf, &session{cfg: rf.cfg, engine: &captureEngine{}}).(tuiModel)
@@ -192,10 +195,13 @@ func TestStatusPinnedWithLongHistory(t *testing.T) {
 		t.Fatalf("input row (row index 4) does not contain a prompt: %q", lines[4])
 	}
 	// Only the newest 4 history lines may remain above the input; older ones
-	// are scrolled away entirely.
+	// are scrolled away entirely. Сравниваем по началу строки: последнюю
+	// колонку занимает полоса прокрутки.
 	newest := "history line"
-	if lines[0] != newest || lines[1] != newest || lines[2] != newest || lines[3] != newest {
-		t.Fatalf("scrolled history rows wrong: %v", lines[:4])
+	for i := 0; i < 4; i++ {
+		if !strings.HasPrefix(lines[i], newest) {
+			t.Fatalf("scrolled history rows wrong: %v", lines[:4])
+		}
 	}
 	if v := m.View(); v.Cursor.Y != 4 {
 		t.Fatalf("cursor Y = %d, want 4", v.Cursor.Y)
@@ -1401,6 +1407,54 @@ func TestAutoCorrectStopsAfterLimit(t *testing.T) {
 	}
 }
 
+// pumpCmd доводит фоновую команду до конца. Она отдаёт куски живого вывода и
+// только потом итог, поэтому одного вызова cmd() мало: итог — последнее
+// сообщение, а не первое.
+func pumpCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("want a background command, got nil")
+	}
+	var msgs []tea.Msg
+	for i := 0; i < 1000; i++ {
+		msg := cmd()
+		if msg == nil {
+			break
+		}
+		msgs = append(msgs, msg)
+		switch msg.(type) {
+		case cmdDoneMsg, directDoneMsg:
+			return msgs
+		}
+	}
+	t.Fatalf("the background command never finished (%d messages)", len(msgs))
+	return msgs
+}
+
+// doneOf достаёт итоговое сообщение фоновой команды из очереди.
+func doneOf(t *testing.T, msgs []tea.Msg) tea.Msg {
+	t.Helper()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		switch msgs[i].(type) {
+		case cmdDoneMsg, directDoneMsg:
+			return msgs[i]
+		}
+	}
+	t.Fatal("no final message in the background command queue")
+	return nil
+}
+
+// feedCmd прогоняет фоновую команду через Update, как это делает цикл
+// событий, и отдаёт модель после каждого сообщения.
+func feedCmd(t *testing.T, m tuiModel, cmd tea.Cmd) tuiModel {
+	t.Helper()
+	for _, msg := range pumpCmd(t, cmd) {
+		mm, _ := m.Update(msg)
+		m = mm.(tuiModel)
+	}
+	return m
+}
+
 // Команда LLM выполняется в фоне: Update возвращает сразу, ввод не висит.
 func TestRunCommandDoesNotBlock(t *testing.T) {
 	m := newTestTui()
@@ -1424,8 +1478,7 @@ func TestRunCommandDoesNotBlock(t *testing.T) {
 	if got.input != "next" {
 		t.Fatal("input must stay editable while a command runs")
 	}
-	mm, _ := got.Update(cmd().(cmdDoneMsg))
-	got = mm.(tuiModel)
+	got = feedCmd(t, got, cmd)
 	if got.running {
 		t.Fatal("running must be cleared after completion")
 	}
@@ -1457,6 +1510,148 @@ func TestEscCancelsBackgroundCommand(t *testing.T) {
 	}
 }
 
+// slowEcho печатает первый маркер, ждёт и печатает второй: так видно, что
+// вывод команды появляется в транскрипте, пока она ещё работает.
+func slowEcho(first, second string) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("echo %s; Start-Sleep -Milliseconds 700; echo %s", first, second)
+	}
+	return fmt.Sprintf("echo %s; sleep 1; echo %s", first, second)
+}
+
+// Главное обещание фоновой команды: её вывод виден в момент работы, а не
+// после. Раньше всё печаталось одним куском в конце.
+func TestBackgroundOutputIsVisibleWhileRunning(t *testing.T) {
+	m := newTestTui()
+	m.width, m.height = 100, 20
+	m.rf.cfg.Shell = testShell()
+
+	got, cmd := m.runCommand(prompt.Response{
+		Intent:  prompt.IntentRunCommand,
+		Command: slowEcho("dmsh-live-first", "dmsh-live-second"),
+		Risk:    prompt.RiskLow,
+	})
+
+	// Первое сообщение — кусок вывода, а не итог.
+	first := cmd()
+	out, ok := first.(cmdOutMsg)
+	if !ok {
+		t.Fatalf("first message = %#v, want a live output chunk", first)
+	}
+	mm, pump := got.Update(out)
+	got = mm.(tuiModel)
+	if !strings.Contains(got.content, "dmsh-live-first") {
+		t.Fatalf("the first line must be visible before the command finishes:\n%s", got.content)
+	}
+	if !got.running || got.state != tuiRunning {
+		t.Fatalf("state = %d running = %v, want the command still running", got.state, got.running)
+	}
+	if pump == nil {
+		t.Fatal("the output queue must keep being pumped")
+	}
+	// Строка ввода показывает, что идёт команда и сколько она уже идёт.
+	_, inRows := got.layoutRows()
+	if row := strings.Join(inRows, "\n"); !strings.Contains(row, "running") {
+		t.Fatalf("input row should report the running command:\n%s", row)
+	}
+
+	// Дальше крутим тот же насос: он отдаёт остаток вывода и, наконец, итог.
+	for i := 0; i < 50; i++ {
+		msg := pump()
+		if msg == nil {
+			break
+		}
+		if _, isDone := msg.(cmdDoneMsg); isDone {
+			mm, _ = got.Update(msg)
+			got = mm.(tuiModel)
+			break
+		}
+		mm, next := got.Update(msg)
+		got = mm.(tuiModel)
+		if next == nil {
+			t.Fatalf("the queue stopped being pumped at %T", msg)
+		}
+		pump = next
+	}
+	if got.running {
+		t.Fatalf("the command must be finished by its own result:\n%s", got.content)
+	}
+	if !strings.Contains(got.content, "dmsh-live-second") {
+		t.Fatalf("the rest of the output must arrive with the result:\n%s", got.content)
+	}
+	// Живой вывод уже показан — итог не должен печатать его второй раз.
+	// Считаем строки, а не вхождения: маркер есть ещё и в напечатанной
+	// команде над ними.
+	if n := countLines(got.content, "dmsh-live-first"); n != 1 {
+		t.Fatalf("live output printed %d times, want once:\n%s", n, got.content)
+	}
+	if n := countLines(got.content, "dmsh-live-second"); n != 1 {
+		t.Fatalf("live output printed %d times, want once:\n%s", n, got.content)
+	}
+}
+
+// countLines считает строки транскрипта, равные marker без учёта \r.
+func countLines(content, marker string) int {
+	n := 0
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == marker {
+			n++
+		}
+	}
+	return n
+}
+
+// Границы кусков не совпадают со строками: дописывать надо как есть, иначе
+// строка рвётся на куски, которых в выводе не было.
+func TestLiveOutputKeepsPartialLines(t *testing.T) {
+	m := newTestTui()
+	m.width, m.height = 100, 20
+	m.running = true
+	m.cmdCh = make(chan tea.Msg, 1)
+
+	mm, _ := m.appendCmdOutput(cmdOutMsg{text: "dmsh-partial-"})
+	m = mm.(tuiModel)
+	mm, _ = m.appendCmdOutput(cmdOutMsg{text: "rest\n"})
+	m = mm.(tuiModel)
+
+	if !strings.Contains(m.content, "dmsh-partial-rest\n") {
+		t.Fatalf("chunks must join into one line:\n%q", m.content)
+	}
+	if strings.Contains(m.content, "dmsh-partial-\n") {
+		t.Fatalf("a chunk must not be closed with a newline:\n%q", m.content)
+	}
+}
+
+// Живой вывод ограничен: лог сборки на сотни мегабайт не должен влезать в
+// транскрипт целиком, но очередь обязана продолжаться, иначе процесс встанет.
+func TestLiveOutputTruncatesButKeepsPumping(t *testing.T) {
+	m := newTestTui()
+	m.width, m.height = 100, 20
+	m.running = true
+	m.cmdCh = make(chan tea.Msg, 1)
+	m.cmdLive = maxLiveOutput - 10
+
+	mm, pump := m.appendCmdOutput(cmdOutMsg{text: strings.Repeat("x", 64)})
+	m = mm.(tuiModel)
+	if !m.cmdTrunc {
+		t.Fatal("live output must be cut at the limit")
+	}
+	if !strings.Contains(m.content, "live output cut") {
+		t.Fatalf("the cut must be visible:\n%s", m.content)
+	}
+	if strings.Contains(m.content, "xxxxxxxxxx") {
+		t.Fatalf("the chunk past the limit must not be printed:\n%s", m.content)
+	}
+	if pump == nil {
+		t.Fatal("the queue must keep being pumped after the cut, or the process blocks")
+	}
+	// Следующий кусок тоже не печатается, но очередь жива.
+	mm, pump = m.appendCmdOutput(cmdOutMsg{text: "tail\n"})
+	if pump == nil || mm.(tuiModel).cmdLive != m.cmdLive {
+		t.Fatal("pumping and the byte counter must stay stable after the cut")
+	}
+}
+
 // Устаревший результат фоновой команды не затирает новую.
 func TestStaleBackgroundResultIgnored(t *testing.T) {
 	m := newTestTui()
@@ -1468,7 +1663,7 @@ func TestStaleBackgroundResultIgnored(t *testing.T) {
 	if cmd1 == nil {
 		t.Fatal("want a background command, got nil")
 	}
-	stale := cmd1().(cmdDoneMsg)
+	stale := doneOf(t, pumpCmd(t, cmd1))
 	staleBefore := first.content
 	// Пользователь успел запустить вторую команду раньше завершения первой.
 	second, _ := first.startBackgroundCommand(prompt.Response{
@@ -1509,9 +1704,9 @@ func TestAutoCorrectBudgetResetsOnSuccess(t *testing.T) {
 		t.Fatalf("state = %d running = %v, want tuiRunning + running", got.state, got.running)
 	}
 	// Выполняем фоновую команду и отдаём результат обратно в модель.
-	msg := cmd().(cmdDoneMsg)
-	if msg.seq != got.cmdSeq {
-		t.Fatalf("seq = %d, want %d", msg.seq, got.cmdSeq)
+	msg := doneOf(t, pumpCmd(t, cmd))
+	if d, ok := msg.(cmdDoneMsg); !ok || d.seq != got.cmdSeq {
+		t.Fatalf("final message = %#v, want cmdDoneMsg with seq %d", msg, got.cmdSeq)
 	}
 	mm, _ := got.Update(msg)
 	got = mm.(tuiModel)

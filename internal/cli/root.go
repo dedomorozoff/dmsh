@@ -93,6 +93,14 @@ func NewRootCmd() *cobra.Command {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dmsh: "+err.Error())
 	}
+	return NewRootCmdWithConfig(cfg)
+}
+
+// NewRootCmdWithConfig собирает корень с уже готовым конфигом. Так делает
+// генератор man-страниц: значения по умолчанию печатаются в man, и брать их
+// из файла пользователя нельзя — туда уехали бы его путь к модели,
+// провайдер и ключ.
+func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	rf := &rootFlags{cfg: cfg}
 
 	cmd := &cobra.Command{
@@ -151,6 +159,7 @@ func NewRootCmd() *cobra.Command {
 	pf.BoolVar(&rf.cfg.DryRun, "dry-run", rf.cfg.DryRun, "show commands without executing them")
 	pf.BoolVar(&rf.preview, "preview", false, "show the command with highlighted options and require confirmation before executing")
 	pf.BoolVar(&rf.autoYes, "yes", false, "automatically approve confirmations (for scripting)")
+	pf.BoolVar(&rf.cfg.Mouse, "mouse", rf.cfg.Mouse, "mouse in the TUI: click the folder in the status line to change directory (--mouse=false keeps the terminal's own text selection)")
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))

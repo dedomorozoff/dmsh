@@ -302,6 +302,12 @@ with scrollback, live streaming and a status line. Three modes:
 Switch with `Shift+Tab` (cycles ai → help → terminal), the command palette
 on `Ctrl+P`, `/mode` (opens the mode list) or `/mode ai|help|shell`.
 
+Long commands (composer, tests, a build) run in the background: the prompt
+stays free and the output appears in the transcript **while the command is
+still writing**, not afterwards. The input row keeps showing what is running
+and for how long; `Esc` cancels it. Live output is capped at 64 KB per
+command — the full text always goes to the audit log.
+
 ### Slash commands
 
 | Command | Description |
@@ -346,7 +352,39 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `Shift+Tab` | cycle modes: ai → help → terminal |
 | `↑/↓` | previous / next command from history (persisted across sessions) |
 | `PgUp/PgDn` | scroll output |
+| mouse wheel | scroll output (the list in a modal window) |
+| click the right edge | the scrollbar: click the track to jump through the history |
+| click anything | the status line is a row of buttons — folder, `mode:`, `model:`, `proxy:`, and the `help` / `palette` / `mode` hints. In every window (palette, setup, settings, mode list, folder picker, model menu, todo, confirmation) a row does what `Enter` does on it. One rule for both: a click past a row does nothing, so a misclick never applies a setting |
+| `[ retry ]` `[ explain ]` `[ shell ]` | under the answer, after a command ran: rerun the last request, get an explanation in the input line, or open the shell |
 | any key (terminal mode) | goes to the shell; `Shift+Tab` returns to the prompt |
+
+Inside the embedded terminal the mouse belongs to the shell: when the program
+you launched asks for mouse events (vim, less, fzf, lazygit), dmsh forwards
+clicks, drags and the wheel into the pseudo-terminal and stops using the mouse
+itself. A plain shell keeps it for dmsh.
+
+Two things stay keyboard-only on purpose: **clearing the todo list** (`c`,
+never a click — it is irreversible) and **the scrollback jump** is offered as
+a click on the `↓N below` hint next to a running command.
+
+Mouse is on by default. Turn it off with `--mouse=false` or
+`dmsh config set mouse false`: while it is on, the terminal sends mouse events
+to dmsh instead of selecting text itself, so native selection and copy need
+the keyboard.
+
+### Long output and the scrollback
+
+The transcript keeps the last 4000 lines; the trim is announced in place with a
+pointer to the audit log, so a truncated build log never looks like a silent
+command. While a background command runs, the input row shows `↓N below` when
+you have scrolled up — click it to jump back to the end.
+
+### Confirmation
+
+A command that needs confirmation opens a window with the command itself, its
+risk level and **the rule that fired** (a danger pattern, a user rule, or "the
+model asked"). `y` runs, `Enter` / `Esc` / `n` cancel, and the `[ run ]` /
+`[ cancel ]` buttons do the same by mouse.
 
 ## Other commands
 
@@ -363,7 +401,7 @@ Common flags (all subcommands): `--model`, `--provider`, `--remote-model`,
 `--proxy-proto`, `--proxy-host`, `--proxy-port`, `--proxy-user`,
 `--proxy-password`, `--no-proxy`, `--threads`, `--ctx-size`,
 `--gpu-layers`, `--max-tokens`, `--temperature`, `--top-p`, `--shell`,
-`--dry-run`, `--preview`, `--yes`.
+`--dry-run`, `--preview`, `--yes`, `--mouse`.
 
 ## Auto-detection
 
