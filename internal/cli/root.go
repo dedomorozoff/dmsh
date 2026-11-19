@@ -92,7 +92,7 @@ func (v proxyAddressValue) Type() string { return "proxy-address" }
 func NewRootCmd() *cobra.Command {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "dmsh: "+err.Error())
+		fmt.Fprintln(os.Stderr, "dmsh: "+err.Error()+" (run `dmsh doctor` for diagnostics)")
 	}
 	return NewRootCmdWithConfig(cfg)
 }
