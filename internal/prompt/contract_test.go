@@ -169,13 +169,19 @@ func TestParse_FallbackParser(t *testing.T) {
 		t.Fatalf("unexpected parsed values: %+v", r2)
 	}
 
-	// Case 3: Truncated mid-command (e.g. output cut by max_tokens)
-	rawCut := "{\n\t\"intent\": \"run_command\",\n\t\"command\": \"find . -name \\\"*.go\\\" -not -path ./vendor\","
-	r3, err := Parse(rawCut)
+	// Case 3: JSON truncated after a complete command string.
+	rawAfterCmd := "{\n\t\"intent\": \"run_command\",\n\t\"command\": \"find . -name \\\"*.go\\\" -not -path ./vendor\","
+	r3, err := Parse(rawAfterCmd)
 	if err != nil {
-		t.Fatalf("expected fallback parsing to succeed for truncated command, got error: %v", err)
+		t.Fatalf("expected fallback parsing to succeed when command string is complete, got error: %v", err)
 	}
 	if r3.Intent != IntentRunCommand || !strings.Contains(r3.Command, "find . -name") {
 		t.Fatalf("unexpected parsed values: %+v", r3)
+	}
+
+	// Case 4: Command string itself truncated (unclosed) must not be accepted as executable.
+	rawCutCmd := "{\n\t\"intent\": \"run_command\",\n\t\"command\": \"find . -name \\\"*.go\\\" -not -path ./ven"
+	if _, err := Parse(rawCutCmd); err == nil {
+		t.Fatal("expected parse to fail for a truncated command string")
 	}
 }

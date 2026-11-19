@@ -21,6 +21,11 @@ type Result struct {
 // На Windows + PowerShell добавляет установку UTF-8 кодировки.
 func prepareCommand(ctx context.Context, shell, command string) *exec.Cmd {
 	args := shellArgs(shell)
+	effective := shell
+	if strings.TrimSpace(effective) == "" {
+		effective = args[0]
+	}
+	command = unwrapShellCommand(effective, command)
 	if runtime.GOOS == "windows" {
 		if strings.Contains(strings.ToLower(args[0]), "powershell") || strings.Contains(strings.ToLower(args[0]), "pwsh") {
 			command = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " + command

@@ -100,3 +100,74 @@ func TestRunStreamRejectsEmptyCommand(t *testing.T) {
 		t.Fatal("an empty command must be an error")
 	}
 }
+
+func TestUnwrapShellCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		shell   string
+		command string
+		want    string
+	}{
+		{
+			name:    "powershell double wrapped quoted",
+			shell:   "powershell",
+			command: `powershell -NoProfile -Command "Get-Date"`,
+			want:    "Get-Date",
+		},
+		{
+			name:    "pwsh exe with c flag",
+			shell:   "pwsh",
+			command: `pwsh.exe -NoLogo -c "Write-Output hi"`,
+			want:    "Write-Output hi",
+		},
+		{
+			name:    "powershell preserves inner script with variables",
+			shell:   "powershell",
+			command: "powershell -NoProfile -Command \"$s=@('a','b'); $s\"",
+			want:    "$s=@('a','b'); $s",
+		},
+		{
+			name:    "cmd double wrapped",
+			shell:   "cmd",
+			command: `cmd /c "echo hi"`,
+			want:    "echo hi",
+		},
+		{
+			name:    "bash double wrapped",
+			shell:   "/bin/bash",
+			command: `bash -c "echo hi"`,
+			want:    "echo hi",
+		},
+		{
+			name:    "no unwrap different shell kind",
+			shell:   "powershell",
+			command: `cmd /c echo hi`,
+			want:    `cmd /c echo hi`,
+		},
+		{
+			name:    "no unwrap plain command",
+			shell:   "powershell",
+			command: `Get-ChildItem -Path .`,
+			want:    `Get-ChildItem -Path .`,
+		},
+		{
+			name:    "unwrap unquoted rest",
+			shell:   "powershell",
+			command: `powershell -Command Get-Date`,
+			want:    "Get-Date",
+		},
+		{
+			name:    "default windows shell resolved",
+			shell:   "powershell",
+			command: `PowerShell.exe -Command "Write-Output ok"`,
+			want:    "Write-Output ok",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := unwrapShellCommand(tt.shell, tt.command); got != tt.want {
+				t.Fatalf("unwrapShellCommand(%q, %q) = %q, want %q", tt.shell, tt.command, got, tt.want)
+			}
+		})
+	}
+}

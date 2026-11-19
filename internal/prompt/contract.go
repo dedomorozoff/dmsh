@@ -127,6 +127,7 @@ func Parse(raw string) (Response, error) {
 
 func parseFallback(raw string) (Response, error) {
 	var resp Response
+	truncatedCommand := false
 
 	// Extract intent
 	reIntent := regexp.MustCompile(`"intent"\s*:\s*"([^"]+)"`)
@@ -141,6 +142,7 @@ func parseFallback(raw string) (Response, error) {
 	} else if match := regexp.MustCompile(`(?s)"command"\s*:\s*"((?:[^"\\]|\\.)*)`).FindStringSubmatch(raw); len(match) > 1 {
 		// Truncated JSON: string value may be unclosed.
 		resp.Command = unescapeString(strings.TrimRight(match[1], " \t\r\n"))
+		truncatedCommand = true
 	}
 
 	// Extract explanation
@@ -173,6 +175,9 @@ func parseFallback(raw string) (Response, error) {
 
 	if err := resp.Validate(); err != nil {
 		return Response{}, fmt.Errorf("fallback validation failed: %w", err)
+	}
+	if truncatedCommand && resp.Command != "" {
+		return Response{}, fmt.Errorf("truncated response: command appears incomplete")
 	}
 
 	return resp, nil
