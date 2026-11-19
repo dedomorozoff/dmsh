@@ -103,10 +103,10 @@ func TestConfirmKeysUnchanged(t *testing.T) {
 			t.Error("y must run the command")
 		}
 	})
-	t.Run("enter cancels", func(t *testing.T) {
+	t.Run("enter confirms", func(t *testing.T) {
 		got := press(confirmTui(t), tea.KeyPressMsg{Code: tea.KeyEnter})
-		if got.running {
-			t.Error("Enter must cancel: a reflexive Enter should not run anything")
+		if !got.running {
+			t.Error("Enter must confirm/run the command")
 		}
 	})
 	t.Run("esc cancels", func(t *testing.T) {

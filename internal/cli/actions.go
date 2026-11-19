@@ -65,8 +65,12 @@ func (m tuiModel) actionBarRegions() []clickRegion {
 	if len(segs) == 0 {
 		return nil
 	}
-	// Строка идёт сразу за строкой ввода в блоке ввода: там же, где курсор.
-	y := m.inputRow() + 1
+	// Action bar is rendered immediately after prompt/input rows in the default layout.
+	promptRows := len(hardWrap(m.buildPrompt()+m.input, m.width))
+	if promptRows < 1 {
+		promptRows = 1
+	}
+	y := m.inputRow() + promptRows
 	regions := make([]clickRegion, 0, len(segs))
 	x := 0
 	for _, s := range segs {

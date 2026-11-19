@@ -87,7 +87,7 @@ func (m tuiModel) confirmRow(row int) string {
 	case confirmRowWhy:
 		return fitWidth(fmt.Sprintf("  why: %s%s%s", colorGray, m.confirmWhy(), colorReset), m.width)
 	case confirmRowRun:
-		return fmt.Sprintf("  %s[ run ]%s      %sy%s", colorYellow+colorBold, colorReset, colorGray, colorReset)
+		return fmt.Sprintf("  %s[ run ]%s      %sy / Enter%s", colorYellow+colorBold, colorReset, colorGray, colorReset)
 	case confirmRowCancel:
 		return fmt.Sprintf("  %s[ cancel ]%s    %sn / Esc%s", colorGray, colorReset, colorGray, colorReset)
 	}
@@ -130,9 +130,9 @@ func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch strings.ToLower(msg.String()) {
-	case "y", "yes":
+	case "y", "yes", "enter":
 		return m.applyConfirm(true)
-	case "n", "no", "enter":
+	case "n", "no":
 		return m.applyConfirm(false)
 	case "ctrl+c", "esc", "escape":
 		return cancel()
@@ -140,7 +140,7 @@ func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.Code {
 	case tea.KeyEnter:
-		return m.applyConfirm(false)
+		return m.applyConfirm(true)
 	case tea.KeyEscape:
 		return cancel()
 	}
