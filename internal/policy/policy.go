@@ -22,7 +22,10 @@ type pattern struct {
 
 var dangerPatternsUnix = []pattern{
 	{regexp.MustCompile(`(?i)\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b.*\s/(\s|$)`), "rm -rf на корне"},
+	{regexp.MustCompile(`(?i)\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b.*["']/(\*?)["'](\s|$)`), "rm -rf на корне"},
 	{regexp.MustCompile(`(?i)\brm\s+-[a-z]*r[a-z]*f?\s+/\*`), "rm -rf /*"},
+	{regexp.MustCompile(`(?i)\brm\b.*--no-preserve-root`), "rm с --no-preserve-root"},
+	{regexp.MustCompile(`(?i)\brm\s+-[a-z]*r[a-z]*f[a-z]*\b.*\s["']?(~|\$HOME)["']?(\s|$)`), "rm -rf домашней папки"},
 	{regexp.MustCompile(`(?i)\bmkfs(\.[a-z0-9]+)?\b`), "форматирование ФС"},
 	{regexp.MustCompile(`(?i)\bdd\s+if=.+\s+of=/dev/`), "dd на блочное устройство"},
 	{regexp.MustCompile(`(?i)>\s*/dev/sd[a-z]`), "запись в блочное устройство"},
@@ -72,6 +75,10 @@ var dangerPatternsWindows = []pattern{
 	{regexp.MustCompile(`(?i)\bcertutil\b.*-urlcache\b`), "certutil download"},
 	{regexp.MustCompile(`(?i)\bwmic\s+process\s+call\s+create\b`), "WMI process execution"},
 	{regexp.MustCompile(`(?i)\btakeown\b`), "take ownership of file/directory"},
+	{regexp.MustCompile(`(?i)\b(del|erase)\b[^|;&]*\s[A-Z]:[\\/]*["']?(\s|$)`), "удаление с корня диска"},
+	{regexp.MustCompile(`(?i)\b(rd|rmdir)\s+/s\b[^|;&]*\s[A-Z]:[\\/]*["']?(\s|$)`), "удаление каталога с корня диска"},
+	{regexp.MustCompile(`(?i)\b(diskpart|vssadmin\s+delete|cipher\s+/w|wbadmin\s+delete)\b`), "разрушение теневых копий или разделов"},
+	{regexp.MustCompile(`(?i)\bFormat-Volume\b`), "форматирование тома"},
 }
 
 var suspiciousPatternsWindows = []*regexp.Regexp{
@@ -79,6 +86,8 @@ var suspiciousPatternsWindows = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\biex\s*\(irm\b`),
 	regexp.MustCompile(`(?i)\bStop-Service\b`),
 	regexp.MustCompile(`(?i)\bRemove-Item\s+.*-Recurse\b`),
+	regexp.MustCompile(`(?i)\b(rd|rmdir)\s+/s\b`),
+	regexp.MustCompile(`(?i)\bdel\s+/[a-z]*[sfq]\b`),
 	regexp.MustCompile(`(?i)\bgit\s+push\b.*--force`),
 	regexp.MustCompile(`(?i)\bdocker\s+(rm|rmi|system\s+prune)\b`),
 }
@@ -87,6 +96,13 @@ var suspiciousPatternsWindows = []*regexp.Regexp{
 // dangerPatterns или userDanger — Allowed=false: shell обязан спросить подтверждение
 // (или, в --strict, отказать вовсе). Иначе мы лишь корректируем risk.
 func Evaluate(cmd string, suggested prompt.Risk, userDanger []string, userSuspicious []string) Decision {
+	return evaluate(cmd, suggested, userDanger, userSuspicious, 0)
+}
+
+// evaluate — рекурсивное ядро Evaluate. Обёртки (`bash -c`, `cmd /c`,
+// `eval`) проверяются по тексту, который они исполнят, а не по внешней
+// строке: иначе кавычки скрывали команду от denylist.
+func evaluate(cmd string, suggested prompt.Risk, userDanger []string, userSuspicious []string, depth int) Decision {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return Decision{Allowed: false, Risk: prompt.RiskHigh, Reason: "пустая команда"}
@@ -107,12 +123,7 @@ func Evaluate(cmd string, suggested prompt.Risk, userDanger []string, userSuspic
 		}
 	}
 
-	dangerPats := dangerPatternsUnix
-	suspiciousPats := suspiciousPatternsUnix
-	if runtime.GOOS == "windows" {
-		dangerPats = dangerPatternsWindows
-		suspiciousPats = suspiciousPatternsWindows
-	}
+	dangerPats, suspiciousPats := activePatterns()
 
 	for _, p := range dangerPats {
 		if p.re.MatchString(cmd) {
@@ -123,6 +134,19 @@ func Evaluate(cmd string, suggested prompt.Risk, userDanger []string, userSuspic
 	risk := suggested
 	if risk == "" {
 		risk = prompt.RiskLow
+	}
+
+	// Вложенная оболочка: опасность внутри кавычек важнее внешней строки.
+	if depth < maxNestedDepth {
+		for _, inner := range nestedScripts(cmd) {
+			d := evaluate(inner, risk, userDanger, userSuspicious, depth+1)
+			if !d.Allowed {
+				return Decision{Allowed: false, Risk: prompt.RiskHigh, Reason: "вложенная оболочка: " + d.Reason}
+			}
+			if riskRank(d.Risk) > riskRank(risk) {
+				risk = d.Risk
+			}
+		}
 	}
 
 	// Проверяем пользовательские подозрительные паттерны
@@ -153,4 +177,30 @@ func Evaluate(cmd string, suggested prompt.Risk, userDanger []string, userSuspic
 		}
 	}
 	return Decision{Allowed: true, Risk: risk}
+}
+
+// activePatterns отдаёт опасные шаблоны обеих платформ: оболочка не всегда
+// совпадает с хостом (Git Bash или WSL на Windows, bash на macOS), а цена
+// пропущенной опасной команды выше цены лишнего отказа.
+func activePatterns() ([]pattern, []*regexp.Regexp) {
+	danger := make([]pattern, 0, len(dangerPatternsUnix)+len(dangerPatternsWindows))
+	danger = append(danger, dangerPatternsUnix...)
+	danger = append(danger, dangerPatternsWindows...)
+	if runtime.GOOS == "windows" {
+		return danger, suspiciousPatternsWindows
+	}
+	return danger, suspiciousPatternsUnix
+}
+
+// riskRank нужен, чтобы вложенная команда могла только повысить риск:
+// medium внутри `bash -c` не должен понижать высокий внешний.
+func riskRank(r prompt.Risk) int {
+	switch r {
+	case prompt.RiskHigh:
+		return 2
+	case prompt.RiskMedium:
+		return 1
+	default:
+		return 0
+	}
 }

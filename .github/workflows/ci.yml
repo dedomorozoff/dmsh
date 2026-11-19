@@ -8,6 +8,28 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go mod download
+      # -count=1: a cached "ok" hides failures after a dependency or
+      # toolchain change; the suite is small enough to run every time.
+      - run: go test ./... -count=1 -timeout 10m
+      - run: go vet ./...
+      - run: go build ./...
+      - name: Smoke test
+        run: go run ./cmd/dmsh version
+
+  race:
+    name: race (ubuntu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -15,9 +37,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod download
-      - run: go test ./...
-      - run: go vet ./...
-      - run: go build ./...
+      - run: go test -race ./... -count=1 -timeout 15m
 
   lint:
     runs-on: ubuntu-latest

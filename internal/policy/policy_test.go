@@ -170,6 +170,115 @@ func TestEvaluate_WindowsNewDangerPatterns(t *testing.T) {
 	}
 }
 
+// Обёртка не должна скрывать команду от denylist: текст внутри кавычек
+// проверяется отдельно, тем же набором правил.
+func TestEvaluate_BlocksNestedShell(t *testing.T) {
+	cases := []string{
+		`bash -c 'rm -rf /'`,
+		`sh -c "mkfs.ext4 /dev/sda1"`,
+		`/bin/bash -lc "dd if=/dev/zero of=/dev/sda"`,
+		`eval "rm -rf /"`,
+		`sudo bash -c 'rm -rf /'`,
+		`bash -c "bash -c 'rm -rf /'"`,
+		`sh -c 'rm -rf "$HOME"'`,
+		`find . -name '*.go' -exec sh -c 'rm -rf /' \;`,
+		`powershell -NoProfile -Command "Remove-Item C:\ -Recurse -Force"`,
+		`cmd /c "del /s /q C:\"`,
+		`cmd /c "rd /s /q C:\"`,
+	}
+	for _, cmd := range cases {
+		d := evaluateHelper(cmd, prompt.RiskLow)
+		if d.Allowed {
+			t.Errorf("expected nested command %q to be blocked", cmd)
+		}
+		if d.Risk != prompt.RiskHigh {
+			t.Errorf("expected high risk for %q, got %s", cmd, d.Risk)
+		}
+	}
+}
+
+// Упоминание опасной команды в echo ничего не исполняет: блокировать его
+// значило бы ломать обычный вывод и документацию.
+func TestEvaluate_AllowsEchoOfDangerousText(t *testing.T) {
+	cases := []string{
+		`echo bash -c 'rm -rf /'`,
+		`echo "rm -rf /"`,
+	}
+	for _, cmd := range cases {
+		d := evaluateHelper(cmd, prompt.RiskLow)
+		if !d.Allowed || d.Risk != prompt.RiskLow {
+			t.Errorf("%q should stay low and allowed, got %+v", cmd, d)
+		}
+	}
+}
+
+// Обычные обёрнутые команды не должны становиться высокорисковыми.
+func TestEvaluate_AllowsHarmlessNestedCommands(t *testing.T) {
+	cases := []string{
+		`bash -c 'git status'`,
+		`powershell -NoProfile -Command "Get-ChildItem -Path ."`,
+		`cmd /c "dir"`,
+		`python -c "print(1)"`,
+		`node -e "console.log(1)"`,
+	}
+	for _, cmd := range cases {
+		d := evaluateHelper(cmd, prompt.RiskLow)
+		if !d.Allowed {
+			t.Errorf("%q must be allowed, got %+v", cmd, d)
+		}
+		if d.Risk != prompt.RiskLow {
+			t.Errorf("%q must stay low risk, got %s", cmd, d.Risk)
+		}
+	}
+}
+
+// Подозрительная команда внутри обёртки всё ещё требует подтверждения.
+func TestEvaluate_NestedSuspiciousRaisesRisk(t *testing.T) {
+	cmd := `bash -c 'git push --force origin main'`
+	if runtime.GOOS != "windows" {
+		// sudo — подозрительная команда только в unix-наборе правил.
+		cmd = `bash -c 'sudo systemctl restart nginx'`
+	}
+	d := evaluateHelper(cmd, prompt.RiskLow)
+	if !d.Allowed {
+		t.Fatalf("%q must be allowed (with confirmation), not blocked", cmd)
+	}
+	if d.Risk != prompt.RiskMedium && d.Risk != prompt.RiskHigh {
+		t.Fatalf("%q: expected raised risk, got %s", cmd, d.Risk)
+	}
+}
+
+func TestNestedScripts(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want []string
+	}{
+		{`bash -c "rm -rf /"`, []string{"rm -rf /"}},
+		{`echo bash -c "rm -rf /"`, nil},
+		{`sudo -E env FOO=1 bash -lc 'id'`, []string{"id"}},
+		{`xargs -0 sh -c 'echo hi'`, []string{"echo hi"}},
+		{`find . -exec sh -c 'id' \;`, []string{"id"}},
+		{`powershell -NoProfile -Command "Get-ChildItem"`, []string{"Get-ChildItem"}},
+		{`cmd /c "dir"`, []string{"dir"}},
+		{`su - postgres -c "psql"`, []string{"psql"}},
+		{`node -e "console.log(1)"`, []string{"console.log(1)"}},
+		{`ls -la`, nil},
+	}
+	for _, tc := range cases {
+		got := nestedScripts(tc.cmd)
+		if len(got) != len(tc.want) {
+			t.Errorf("nestedScripts(%q) = %v, want %v", tc.cmd, got, tc.want)
+			continue
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("nestedScripts(%q) = %v, want %v", tc.cmd, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
 func TestEvaluate_CustomUserRules(t *testing.T) {
 	danger := []string{`\brm\s+-f\b`, `\bformat\b`}
 	suspicious := []string{`\bnano\b`, `\bvim\b`}

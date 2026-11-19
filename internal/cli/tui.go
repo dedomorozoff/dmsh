@@ -509,9 +509,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cmdOutMsg:
 		return m.appendCmdOutput(msg)
 	case cmdTickMsg:
-		// Тик только обновляет время в строке ввода; переделывать его не
-		// нужно — следующий тик придёт из той же горутины команды.
-		return m, nil
+		// Тик обновляет время в строке ввода. Очередь при этом нужно
+		// продолжать вычитывать: тик приходит в тот же канал, что и вывод,
+		// и без нового pump он умирает — вместе с ним замирает и команда,
+		// и её результат.
+		return m, m.cmdPump()
 	case directDoneMsg:
 		return m.finishDirectCommand(msg)
 	case modelDoneMsg:
@@ -1674,7 +1676,11 @@ func (m tuiModel) executeResponse(resp prompt.Response) (tuiModel, tea.Cmd) {
 	}
 	dec := evaluatePolicy(resp, &m.rf.cfg)
 	if !dec.Allowed {
-		m.addLine("(command blocked by security policy)")
+		reason := strings.TrimSpace(dec.Reason)
+		if reason == "" {
+			reason = "security policy"
+		}
+		m.addLine(fmt.Sprintf("(blocked by security policy: %s)", reason))
 		return m, nil
 	}
 	if dec.Risk != prompt.RiskLow || resp.NeedsConfirmation {

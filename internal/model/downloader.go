@@ -2,6 +2,9 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -87,6 +90,10 @@ type ModelInfo struct {
 	SizeMB      int
 	Description string
 	MinRAM      int
+	// SHA256 — ожидаемая контрольная сумма файла (hex). Если пуста,
+	// целостность не проверяется, но скачивание всё равно может быть
+	// возобновлено.
+	SHA256 string
 }
 
 var RecommendedModels = []ModelInfo{
@@ -206,8 +213,10 @@ func (d *Downloader) DownloadURLCtx(ctx context.Context, url string, progress fu
 	}
 
 	tmpPath := destPath + ".tmp"
-	if err := d.downloadFile(ctx, url, tmpPath, progress); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := d.downloadFile(ctx, url, tmpPath, "", progress); err != nil {
+		if isCorruptDownload(err) {
+			_ = os.Remove(tmpPath)
+		}
 		return "", fmt.Errorf("download %s: %w", name, err)
 	}
 
@@ -235,8 +244,10 @@ func (d *Downloader) DownloadCtx(ctx context.Context, info ModelInfo, progress f
 	}
 
 	tmpPath := destPath + ".tmp"
-	if err := d.downloadFile(ctx, info.URL, tmpPath, progress); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := d.downloadFile(ctx, info.URL, tmpPath, info.SHA256, progress); err != nil {
+		if isCorruptDownload(err) {
+			_ = os.Remove(tmpPath)
+		}
 		return "", fmt.Errorf("download %s: %w", info.Name, err)
 	}
 
@@ -247,76 +258,199 @@ func (d *Downloader) DownloadCtx(ctx context.Context, info ModelInfo, progress f
 	return destPath, nil
 }
 
-func (d *Downloader) downloadFile(ctx context.Context, url, destPath string, progress func(dl, total int)) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("new request: %w", err)
+// isCorruptDownload сообщает, что временный файл нельзя докачивать.
+func isCorruptDownload(err error) bool {
+	var c *checksumError
+	return errors.As(err, &c)
+}
+
+type checksumError struct {
+	want string
+	got  string
+}
+
+func (e *checksumError) Error() string {
+	return fmt.Sprintf("sha256 mismatch: want %s, got %s", e.want, e.got)
+}
+
+func (d *Downloader) downloadFile(ctx context.Context, rawURL, destPath, wantSHA string, progress func(dl, total int)) error {
+	wantSHA = strings.ToLower(strings.TrimSpace(wantSHA))
+
+	// Резюмируем с того места, где остановились: GGUF большой, и обрыв
+	// сети не должен означать скачивание с нуля.
+	offset := existingSize(destPath)
+	if offset > 0 && wantSHA != "" {
+		// Нельзя честно проверить целостность куска без знания суммы
+		// префикса, поэтому при требовании SHA256 начинаем заново.
+		_ = os.Remove(destPath)
+		offset = 0
 	}
-	resp, err := d.client.Do(req)
+
+	resp, err := d.openDownload(ctx, rawURL, offset)
 	if err != nil {
-		return fmt.Errorf("GET %s: %w", url, err)
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 && resp.StatusCode != 302 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	if resp.StatusCode == 302 {
-		loc := resp.Header.Get("Location")
-		if loc != "" {
-			resp, err = d.client.Get(loc)
-			if err != nil {
-				return fmt.Errorf("GET redirect: %w", err)
-			}
-			defer func() { _ = resp.Body.Close() }()
-		}
-	}
-
-	finalURL := resp.Request.URL.String()
-	if finalURL != url && strings.HasPrefix(finalURL, "https://") {
+	appendMode := offset > 0 && resp.StatusCode == http.StatusPartialContent
+	if offset > 0 && !appendMode {
+		// Сервер не поддержал Range или вернул неожиданное состояние —
+		// начинаем заново, чтобы не склеить мусор.
 		_ = resp.Body.Close()
-		resp, err = d.client.Get(finalURL)
+		_ = os.Remove(destPath)
+		offset = 0
+		resp, err = d.openDownload(ctx, rawURL, 0)
 		if err != nil {
-			return fmt.Errorf("GET final: %w", err)
+			return err
 		}
 		defer func() { _ = resp.Body.Close() }()
 	}
 
-	contentLen := int(resp.ContentLength)
-	if contentLen < 0 {
-		contentLen = 100 * 1024 * 1024
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusPartialContent:
+	default:
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	f, err := os.Create(destPath)
+	flags := os.O_CREATE | os.O_WRONLY
+	if appendMode {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(destPath, flags, 0o644)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", destPath, err)
 	}
-	defer func() { _ = f.Close() }()
 
+	total := downloadTotal(offset, resp, appendMode)
+	ok := false
+	defer func() {
+		_ = f.Close()
+		if !ok && wantSHA != "" {
+			// Повреждённый файл нельзя докачивать: удаляем, чтобы следующая
+			// попытка началась с чистого состояния.
+			_ = os.Remove(destPath)
+		}
+	}()
+
+	h := sha256.New()
+	downloaded := int(offset)
+	if !appendMode {
+		downloaded = 0
+	}
 	buf := make([]byte, 32*1024)
-	var downloaded int
-
 	for {
-		n, err := resp.Body.Read(buf)
+		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
+			chunk := buf[:n]
+			if _, werr := f.Write(chunk); werr != nil {
 				return fmt.Errorf("write: %w", werr)
+			}
+			if wantSHA != "" {
+				_, _ = h.Write(chunk)
 			}
 			downloaded += n
 			if progress != nil {
-				progress(downloaded, contentLen)
+				progress(downloaded, total)
 			}
 		}
-		if err == io.EOF {
+		if rerr == io.EOF {
 			break
 		}
+		if rerr != nil {
+			return fmt.Errorf("read: %w", rerr)
+		}
+	}
+	if wantSHA != "" {
+		got := hex.EncodeToString(h.Sum(nil))
+		if got != wantSHA {
+			return &checksumError{want: wantSHA, got: got}
+		}
+	}
+	ok = true
+	return nil
+}
+
+// openDownload открывает поток скачивания, сохраняя старую логику обхода
+// редиректов HuggingFace: первый ответ берём без авто-редиректа, затем
+// при необходимости идём по Location и финальному URL вручную.
+func (d *Downloader) openDownload(ctx context.Context, rawURL string, offset int64) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	setRange(req, offset)
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", rawURL, err)
+	}
+
+	if resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusTemporaryRedirect {
+		loc := resp.Header.Get("Location")
+		_ = resp.Body.Close()
+		if loc == "" {
+			return nil, fmt.Errorf("HTTP %d without Location", resp.StatusCode)
+		}
+		resp, err = d.getWithRange(ctx, loc, offset)
 		if err != nil {
-			return fmt.Errorf("read: %w", err)
+			return nil, fmt.Errorf("GET redirect: %w", err)
 		}
 	}
 
-	return nil
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return resp, nil
+	}
+
+	finalURL := resp.Request.URL.String()
+	if finalURL != "" && finalURL != rawURL && strings.HasPrefix(finalURL, "https://") {
+		_ = resp.Body.Close()
+		resp, err = d.getWithRange(ctx, finalURL, offset)
+		if err != nil {
+			return nil, fmt.Errorf("GET final: %w", err)
+		}
+	}
+	return resp, nil
+}
+
+func (d *Downloader) getWithRange(ctx context.Context, rawURL string, offset int64) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	setRange(req, offset)
+	return d.client.Do(req)
+}
+
+func setRange(req *http.Request, offset int64) {
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+}
+
+func existingSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0
+	}
+	if info.Size() < 0 {
+		return 0
+	}
+	return info.Size()
+}
+
+func downloadTotal(offset int64, resp *http.Response, appendMode bool) int {
+	if appendMode {
+		if resp.ContentLength > 0 {
+			return int(offset + resp.ContentLength)
+		}
+		return int(offset)
+	}
+	if resp.ContentLength > 0 {
+		return int(resp.ContentLength)
+	}
+	return 100 * 1024 * 1024
 }
 
 func DetectRAMGB() int {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dedomorozoff/dmsh/internal/fsutil"
 	"github.com/dedomorozoff/dmsh/internal/netproxy"
 )
 
@@ -257,7 +258,10 @@ func Default() Config {
 		Shell:        defaultShell(),
 		HistoryFile:  defaultHistoryFile(),
 		AuditFile:    defaultAuditFile(),
-		DryRun:       false,
+		// Безопасный дефолт: команды показываются, но не выполняются, пока
+		// пользователь явно не снимет dry-run (флаг --dry-run=false или
+		// настройка в конфиге). Совпадает с политикой AGENTS.md.
+		DryRun:       true,
 		ToolsEnabled: true,
 		Mode:         ModeAI,
 		Mouse:        true,
@@ -389,18 +393,15 @@ func Save(cfg Config) error {
 		return fmt.Errorf("config path: %w", err)
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create dir %s: %w", dir, err)
-	}
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	// В конфиге может лежать пароль прокси: файл и каталог закрыты для
+	// остальных пользователей.
+	if err := fsutil.WritePrivate(path, data); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }

@@ -10,7 +10,26 @@ permissions:
   contents: write
 
 jobs:
+  # A tag must not ship a binary that its own test suite cannot pass.
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go mod download
+      - run: go test ./... -count=1 -timeout 10m
+      - run: go vet ./...
+      - run: go build ./...
+
   build:
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -90,6 +109,7 @@ jobs:
           path: bin/dmsh${{ matrix.ext }}
 
   build-cuda:
+    needs: check
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
@@ -148,6 +168,7 @@ jobs:
   # Windows CUDA requires MSVC: MinGW cannot link the NVIDIA CUDA toolkit.
   # Use windows-2022 (VS 17): CUDA 12.5's nvcc/cudafe++ crashes on VS 18 (MSVC 19.51).
   build-cuda-windows:
+    needs: check
     runs-on: windows-2022
     continue-on-error: true
     steps:

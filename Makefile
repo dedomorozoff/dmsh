@@ -257,11 +257,11 @@ endif
 
 .PHONY: test
 test: ## Запустить все тесты
-	$(GO) test ./...
+	$(GO) test ./... -count=1
 
 .PHONY: test-race
 test-race: ## Запустить тесты с детектором гонок
-	$(GO) test -race ./...
+	$(GO) test -race ./... -count=1
 
 .PHONY: vet
 vet: ## Проверить код go vet
@@ -271,8 +271,12 @@ vet: ## Проверить код go vet
 fmt: ## Отформатировать код
 	$(GO) fmt ./...
 
+.PHONY: smoke
+smoke: ## Проверить, что собранное дерево запускается (dmsh version)
+	$(GO) run ./cmd/dmsh version
+
 .PHONY: check
-check: fmt vet test ## Отформатировать, проверить и прогнать тесты
+check: fmt vet test smoke ## Отформатировать, проверить и прогнать тесты
 
 .PHONY: clean
 clean: ## Удалить bin/, dist/ и build-каталог llama.cpp

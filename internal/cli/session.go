@@ -14,6 +14,7 @@ import (
 
 	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/dedomorozoff/dmsh/internal/executor"
+	"github.com/dedomorozoff/dmsh/internal/fsutil"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/model"
 	"github.com/dedomorozoff/dmsh/internal/netproxy"
@@ -107,8 +108,10 @@ func (s *session) addFixNote() {
 // newToolRegistry собирает набор инструментов для текущей сессии.
 // Команда оболочки попадает в схемы, но исполняется отдельно — с проверкой
 // политики безопасности, поэтому её обработчик в реестре — заглушка.
+// Файловые инструменты ограничены рабочим каталогом, домашним каталогом
+// и временной папкой, чтобы модель не читала произвольные файлы системы.
 func newToolRegistry(shell string) *tools.Registry {
-	r := tools.NewRegistry()
+	r := tools.NewRegistry().Restrict(tools.DefaultRoots()...)
 	r.Register(tools.RunCommandSpec(shell), func(context.Context, string) (string, error) {
 		return "", errors.New("run_command must go through the dmsh security policy")
 	})
@@ -511,7 +514,7 @@ func (s *session) saveHistory() error {
 		return nil
 	}
 
-	f, err := os.OpenFile(s.cfg.HistoryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := fsutil.AppendPrivate(s.cfg.HistoryFile)
 	if err != nil {
 		return fmt.Errorf("open history file: %w", err)
 	}
@@ -544,7 +547,7 @@ func trimHistoryFile(path string, maxLines int) error {
 	}
 	lines = lines[len(lines)-maxLines:]
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+	if err := fsutil.WritePrivate(tmp, []byte(strings.Join(lines, "\n")+"\n")); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -579,7 +582,7 @@ func (s *session) audit(cmd, source string, dec policy.Decision, res executor.Re
 	if err != nil {
 		return
 	}
-	f, err := os.OpenFile(s.cfg.AuditFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := fsutil.AppendPrivate(s.cfg.AuditFile)
 	if err != nil {
 		return
 	}
@@ -669,10 +672,9 @@ func (s *session) saveTurns() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := fsutil.WritePrivate(path, data); err != nil {
 		return
 	}
-	_ = os.WriteFile(path, data, 0644)
 }
 
 // askStream отправляет запрос модели и стримит вывод полей на экран в реальном времени.

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -74,6 +75,7 @@ type Runner func(ctx context.Context, rawArgs string) (string, error)
 type Registry struct {
 	order []string
 	items map[string]entry
+	roots []string
 }
 
 type entry struct {
@@ -85,10 +87,104 @@ type entry struct {
 // оболочки добавляет вызывающая сторона через Register.
 func NewRegistry() *Registry {
 	r := &Registry{items: make(map[string]entry, 4)}
-	r.Register(ReadFileSpec(), runReadFile)
-	r.Register(ListDirSpec(), runListDir)
+	r.Register(ReadFileSpec(), r.runReadFile)
+	r.Register(ListDirSpec(), r.runListDir)
 	r.Register(SystemInfoSpec(), runSystemInfo)
 	return r
+}
+
+// Restrict ограничивает read_file и list_dir списком корневых каталогов.
+// Если список пуст, ограничений нет. Метод возвращает реестр для цепочки.
+func (r *Registry) Restrict(roots ...string) *Registry {
+	r.roots = normalizeRoots(roots)
+	return r
+}
+
+// DefaultRoots возвращает безопасные корни для файловых инструментов:
+// рабочий каталог, домашний каталог пользователя и временный каталог.
+func DefaultRoots() []string {
+	var roots []string
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, cwd)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, home)
+	}
+	if tmp := os.TempDir(); tmp != "" {
+		roots = append(roots, tmp)
+	}
+	return roots
+}
+
+func normalizeRoots(roots []string) []string {
+	seen := make(map[string]bool, len(roots))
+	out := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		abs = filepath.Clean(abs)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = resolved
+		}
+		key := pathKey(abs)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, abs)
+	}
+	return out
+}
+
+func pathKey(path string) string {
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
+func (r *Registry) checkPath(path string) error {
+	if len(r.roots) == 0 {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve path: %w", err)
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("resolve path: %w", err)
+	}
+	for _, root := range r.roots {
+		if withinRoot(abs, root) {
+			return nil
+		}
+	}
+	return fmt.Errorf("access to %s is outside the allowed roots", path)
+}
+
+func withinRoot(target, root string) bool {
+	t, k := pathKey(target), pathKey(root)
+	if t == k {
+		return true
+	}
+	rel, err := filepath.Rel(k, t)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return !filepath.IsAbs(rel)
 }
 
 // Register добавляет или заменяет инструмент.
@@ -329,7 +425,7 @@ func objectSchema(props map[string]any, required ...string) map[string]any {
 	return schema
 }
 
-func runReadFile(_ context.Context, rawArgs string) (string, error) {
+func (r *Registry) runReadFile(_ context.Context, rawArgs string) (string, error) {
 	var args ReadFileArgs
 	if err := json.Unmarshal([]byte(orEmptyObject(rawArgs)), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -337,6 +433,9 @@ func runReadFile(_ context.Context, rawArgs string) (string, error) {
 	path := strings.TrimSpace(args.Path)
 	if path == "" {
 		return "", fmt.Errorf("path is required")
+	}
+	if err := r.checkPath(path); err != nil {
+		return "", err
 	}
 	limit := args.MaxBytes
 	if limit <= 0 || limit > MaxOutputBytes {
@@ -352,7 +451,7 @@ func runReadFile(_ context.Context, rawArgs string) (string, error) {
 	return EncodeResult(Result{OK: true, Content: string(data)}), nil
 }
 
-func runListDir(_ context.Context, rawArgs string) (string, error) {
+func (r *Registry) runListDir(_ context.Context, rawArgs string) (string, error) {
 	var args ListDirArgs
 	if err := json.Unmarshal([]byte(orEmptyObject(rawArgs)), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -360,6 +459,9 @@ func runListDir(_ context.Context, rawArgs string) (string, error) {
 	dir := strings.TrimSpace(args.Path)
 	if dir == "" {
 		dir = "."
+	}
+	if err := r.checkPath(dir); err != nil {
+		return "", err
 	}
 	limit := args.Limit
 	if limit <= 0 {

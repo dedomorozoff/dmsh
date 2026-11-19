@@ -1590,6 +1590,29 @@ func TestBackgroundOutputIsVisibleWhileRunning(t *testing.T) {
 	}
 }
 
+// Тик не должен убивать насос: он приходит в тот же канал, что и вывод.
+// Раньше Update на cmdTickMsg возвращал nil, и фоновая команда замирала
+// вместе с ещё не прочитанным выводом.
+func TestTickKeepsCommandQueuePumped(t *testing.T) {
+	m := newTestTui()
+	ch := make(chan tea.Msg, 2)
+	m.cmdCh = ch
+	m.running = true
+	m.state = tuiRunning
+
+	_, pump := m.Update(cmdTickMsg{})
+	if pump == nil {
+		t.Fatal("a tick must keep the output queue pumped")
+	}
+
+	ch <- cmdOutMsg{seq: m.cmdSeq, text: "still here\n"}
+	if msg := pump(); msg == nil {
+		t.Fatal("the pump stopped after a tick")
+	} else if _, ok := msg.(cmdOutMsg); !ok {
+		t.Fatalf("pump returned %#v, want the output chunk", msg)
+	}
+}
+
 // countLines считает строки транскрипта, равные marker без учёта \r.
 func countLines(content, marker string) int {
 	n := 0
