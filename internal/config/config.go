@@ -252,7 +252,7 @@ func Default() Config {
 		Threads:      hw.CPUCores,
 		CtxSize:      4096,
 		GPULayers:    gpuLayers,
-		MaxTokens:    512,
+		MaxTokens:    1024,
 		Temperature:  0.2,
 		TopP:         0.9,
 		Shell:        defaultShell(),

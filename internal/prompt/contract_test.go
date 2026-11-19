@@ -168,4 +168,14 @@ func TestParse_FallbackParser(t *testing.T) {
 	if r2.Intent != IntentRunCommand || r2.Command != `echo "hello world"` || r2.Explanation != "print greeting" {
 		t.Fatalf("unexpected parsed values: %+v", r2)
 	}
+
+	// Case 3: Truncated mid-command (e.g. output cut by max_tokens)
+	rawCut := "{\n\t\"intent\": \"run_command\",\n\t\"command\": \"find . -name \\\"*.go\\\" -not -path ./vendor\","
+	r3, err := Parse(rawCut)
+	if err != nil {
+		t.Fatalf("expected fallback parsing to succeed for truncated command, got error: %v", err)
+	}
+	if r3.Intent != IntentRunCommand || !strings.Contains(r3.Command, "find . -name") {
+		t.Fatalf("unexpected parsed values: %+v", r3)
+	}
 }

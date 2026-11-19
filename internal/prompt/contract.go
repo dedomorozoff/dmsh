@@ -138,18 +138,25 @@ func parseFallback(raw string) (Response, error) {
 	reCommand := regexp.MustCompile(`"command"\s*:\s*"((?:[^"\\]|\\.)*)"`)
 	if match := reCommand.FindStringSubmatch(raw); len(match) > 1 {
 		resp.Command = unescapeString(match[1])
+	} else if match := regexp.MustCompile(`(?s)"command"\s*:\s*"((?:[^"\\]|\\.)*)`).FindStringSubmatch(raw); len(match) > 1 {
+		// Truncated JSON: string value may be unclosed.
+		resp.Command = unescapeString(strings.TrimRight(match[1], " \t\r\n"))
 	}
 
 	// Extract explanation
 	reExplanation := regexp.MustCompile(`"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"`)
 	if match := reExplanation.FindStringSubmatch(raw); len(match) > 1 {
 		resp.Explanation = unescapeString(match[1])
+	} else if match := regexp.MustCompile(`(?s)"explanation"\s*:\s*"((?:[^"\\]|\\.)*)`).FindStringSubmatch(raw); len(match) > 1 {
+		resp.Explanation = unescapeString(strings.TrimRight(match[1], " \t\r\n"))
 	}
 
 	// Extract question
 	reQuestion := regexp.MustCompile(`"question"\s*:\s*"((?:[^"\\]|\\.)*)"`)
 	if match := reQuestion.FindStringSubmatch(raw); len(match) > 1 {
 		resp.Question = unescapeString(match[1])
+	} else if match := regexp.MustCompile(`(?s)"question"\s*:\s*"((?:[^"\\]|\\.)*)`).FindStringSubmatch(raw); len(match) > 1 {
+		resp.Question = unescapeString(strings.TrimRight(match[1], " \t\r\n"))
 	}
 
 	// Extract risk_level
