@@ -122,6 +122,19 @@ func doctorFilePermChecks(cfg config.Config) []doctorCheck {
 		}
 		out = append(out, doctorCheck{Name: p.name, Status: doctorOK, Message: "permissions look good", Detail: p.path})
 	}
+	if dir := strings.TrimSpace(filepath.Dir(mustConfigPath())); dir != "" {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			if runtime.GOOS != "windows" {
+				if perm := info.Mode().Perm(); perm&0o077 != 0 {
+					out = append(out, doctorCheck{Name: "config dir", Status: doctorWarn, Message: "directory permissions are too open", Detail: fmt.Sprintf("%s (%04o, want 0700)", dir, perm)})
+				} else {
+					out = append(out, doctorCheck{Name: "config dir", Status: doctorOK, Message: "permissions look good", Detail: dir})
+				}
+			} else {
+				out = append(out, doctorCheck{Name: "config dir", Status: doctorOK, Message: "directory exists", Detail: dir})
+			}
+		}
+	}
 	return out
 }
 
@@ -182,9 +195,29 @@ func doctorModelCheck(cfg config.Config) doctorCheck {
 		return doctorCheck{Name: "model", Status: doctorWarn, Message: "cannot list local models", Detail: err.Error()}
 	}
 	if len(models) == 0 {
-		return doctorCheck{Name: "model", Status: doctorWarn, Message: "no local GGUF models found", Detail: modelDir}
+		check := doctorCheck{Name: "model", Status: doctorWarn, Message: "no local GGUF models found", Detail: modelDir}
+		if !dirWritable(modelDir) {
+			check.Status = doctorFail
+			check.Message = "models directory is not writable"
+		}
+		return check
 	}
-	return doctorCheck{Name: "model", Status: doctorOK, Message: fmt.Sprintf("%d local GGUF model(s) found", len(models)), Detail: modelDir}
+	detail := modelDir
+	if !dirWritable(modelDir) {
+		return doctorCheck{Name: "model", Status: doctorWarn, Message: fmt.Sprintf("%d local GGUF model(s) found, but models directory is not writable", len(models)), Detail: detail}
+	}
+	return doctorCheck{Name: "model", Status: doctorOK, Message: fmt.Sprintf("%d local GGUF model(s) found", len(models)), Detail: detail}
+}
+
+func dirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".dmsh-write-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
 }
 
 func doctorBuildCheck() doctorCheck {
