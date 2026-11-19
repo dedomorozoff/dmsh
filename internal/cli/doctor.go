@@ -67,6 +67,9 @@ func runDoctor(ctx context.Context) []doctorCheck {
 	checks = append(checks, doctorConfigCheck(cfg, cfgErr))
 	checks = append(checks, doctorFilePermChecks(cfg)...)
 	checks = append(checks, doctorProviderCheck(cfg)...)
+	if c := doctorProviderBuildCheck(cfg); c.Name != "" {
+		checks = append(checks, c)
+	}
 	checks = append(checks, doctorModelCheck(cfg))
 	checks = append(checks, doctorBuildCheck())
 	checks = append(checks, doctorShellCheck(cfg))
@@ -226,6 +229,13 @@ func doctorBuildCheck() doctorCheck {
 		return doctorCheck{Name: "build", Status: doctorOK, Message: "llama.cpp build detected", Detail: "tags=" + tags + ", " + runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH}
 	}
 	return doctorCheck{Name: "build", Status: doctorWarn, Message: "stub build (no local llama.cpp inference)", Detail: "rebuild with -tags llama for local GGUF inference; remote providers still work"}
+}
+
+func doctorProviderBuildCheck(cfg config.Config) doctorCheck {
+	if cfg.Provider == config.ProviderLocal && !strings.Contains(buildTags(), "llama") {
+		return doctorCheck{Name: "provider/build", Status: doctorFail, Message: "local provider selected but this is a stub build", Detail: "rebuild with -tags llama or switch provider with `dmsh config set provider auto`"}
+	}
+	return doctorCheck{}
 }
 
 func doctorShellCheck(cfg config.Config) doctorCheck {
