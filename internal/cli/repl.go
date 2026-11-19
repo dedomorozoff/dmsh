@@ -325,7 +325,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	}
 
 	if resCorr.Err != nil && !fbCorr.Success {
-		return fmt.Errorf("exit %d: %w", resCorr.ExitCode, resCorr.Err)
+		return &ExitError{Code: resCorr.ExitCode, Err: resCorr.Err}
 	}
 	return nil
 }

@@ -73,6 +73,13 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		if code := ec.ExitCode(); code > 0 {
+			return code
+		}
+		return 1
+	}
 	if isUsageError(err) {
 		return 2
 	}

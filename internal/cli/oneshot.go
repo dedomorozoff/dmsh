@@ -140,7 +140,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		fmt.Fprint(cmd.ErrOrStderr(), res.Stderr)
 	}
 	if res.Err != nil {
-		return fmt.Errorf("exit %d: %w", res.ExitCode, res.Err)
+		return &ExitError{Code: res.ExitCode, Err: res.Err}
 	}
 	return nil
 }
