@@ -123,20 +123,44 @@ func (m tuiModel) openConfirm(resp prompt.Response, dec policyDecisionLite) tuiM
 
 // handleConfirmKey обрабатывает клавиши в окне подтверждения.
 func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	confirmed := false
-	switch msg.String() {
-	case "y", "Y", "yes":
-		confirmed = true
-	case "n", "N", "no", "enter":
-		confirmed = false
-	case "ctrl+c", "esc":
-		confirmed = false
+	cancel := func() (tea.Model, tea.Cmd) {
 		m.input = ""
 		m.cursorPos = 0
-	default:
-		return m, nil
+		return m.applyConfirm(false)
 	}
-	return m.applyConfirm(confirmed)
+
+	switch strings.ToLower(msg.String()) {
+	case "y", "yes":
+		return m.applyConfirm(true)
+	case "n", "no", "enter":
+		return m.applyConfirm(false)
+	case "ctrl+c", "esc", "escape":
+		return cancel()
+	}
+
+	switch msg.Code {
+	case tea.KeyEnter:
+		return m.applyConfirm(false)
+	case tea.KeyEscape:
+		return cancel()
+	}
+
+	switch strings.ToLower(strings.TrimSpace(msg.Text)) {
+	case "y", "yes":
+		return m.applyConfirm(true)
+	case "n", "no":
+		return m.applyConfirm(false)
+	}
+
+	// Fallback: some terminals/bubbletea versions report rune code for letters.
+	switch msg.Code {
+	case 'y', 'Y':
+		return m.applyConfirm(true)
+	case 'n', 'N':
+		return m.applyConfirm(false)
+	}
+
+	return m, nil
 }
 
 // applyConfirm выполняет или отменяет команду. Один путь и для клавиш, и для
@@ -148,12 +172,14 @@ func (m tuiModel) applyConfirm(confirmed bool) (tea.Model, tea.Cmd) {
 		m.confirmOK(confirmed)
 		m.confirmOK = nil
 	}
-	if confirmed && m.pendingResp.Intent == prompt.IntentRunCommand {
-		return m.runCommand(m.pendingResp)
+	if confirmed {
+		if m.pendingResp.Command != "" {
+			return m.runCommand(m.pendingResp)
+		}
+		m.addLine("(nothing to execute)")
+		return m, nil
 	}
-	if !confirmed {
-		m.addLine("(cancelled)")
-	}
+	m.addLine("(cancelled)")
 	return m, nil
 }
 
