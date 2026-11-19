@@ -172,6 +172,7 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(newHistoryCmd())
 	cmd.AddCommand(newAuditCmd())
