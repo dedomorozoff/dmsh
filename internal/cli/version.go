@@ -46,10 +46,21 @@ func buildTags() string {
 }
 
 func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Show version",
 		Run: func(cmd *cobra.Command, _ []string) {
+			if jsonOut {
+				_ = writeJSON(cmd.OutOrStdout(), map[string]any{
+					"version":  displayVersion(),
+					"built":    strings.TrimSpace(BuildDate),
+					"go":       runtime.Version(),
+					"platform": runtime.GOOS + "/" + runtime.GOARCH,
+					"build":    buildTags(),
+				})
+				return
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "dmsh %s\n", displayVersion())
 			if d := strings.TrimSpace(BuildDate); d != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "  Built:    %s\n", d)
@@ -59,6 +70,8 @@ func newVersionCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "  Build:    %s\n", buildTags())
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output version info as JSON")
+	return cmd
 }
 
 func newInfoCmd() *cobra.Command {

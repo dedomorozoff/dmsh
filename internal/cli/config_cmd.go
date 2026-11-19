@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,13 +18,17 @@ func newConfigCmd() *cobra.Command {
 		Long:  "View and edit configuration parameters for dmsh",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	var showJSON bool
+	showCmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show current configuration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
+			}
+			if showJSON {
+				return writeJSON(cmd.OutOrStdout(), sanitizeConfigForJSON(cfg))
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintln(out, "=== Current Configuration ===")
@@ -88,7 +93,9 @@ func newConfigCmd() *cobra.Command {
 			}
 			return nil
 		},
-	})
+	}
+	showCmd.Flags().BoolVar(&showJSON, "json", false, "Output configuration as JSON (secrets masked)")
+	cmd.AddCommand(showCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "set <key> <value>",
@@ -272,4 +279,32 @@ func splitCSV(s string) []string {
 		}
 	}
 	return result
+}
+
+// sanitizeConfigForJSON returns a config map safe for machine output:
+// API key and proxy password are masked or omitted, never exposed in plain text.
+func sanitizeConfigForJSON(cfg config.Config) map[string]any {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return map[string]any{"error": "failed to encode config"}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return map[string]any{"error": "failed to encode config"}
+	}
+	if _, ok := m["remote_api_key"]; ok || cfg.APIKey() != "" {
+		m["remote_api_key"] = cfg.MaskedAPIKey()
+		m["remote_api_key_set"] = cfg.APIKey() != ""
+		m["remote_api_key_source"] = cfg.APIKeySource()
+	} else {
+		m["remote_api_key_set"] = false
+		m["remote_api_key_source"] = ""
+	}
+	if pw, _ := m["proxy_password"].(string); pw != "" || cfg.ProxyPassword != "" {
+		m["proxy_password"] = netproxy.Settings{Password: cfg.ProxyPassword}.MaskedPassword()
+		m["proxy_password_set"] = cfg.ProxyPassword != ""
+	} else {
+		m["proxy_password_set"] = false
+	}
+	return m
 }
