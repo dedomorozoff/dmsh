@@ -209,7 +209,11 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 
 	dec := evaluatePolicy(resp, &rf.cfg)
 	if !dec.Allowed {
-		fmt.Fprintln(out, "(command blocked by security policy)")
+		reason := strings.TrimSpace(dec.Reason)
+		if reason == "" {
+			reason = "security policy"
+		}
+		fmt.Fprintf(out, "(blocked by security policy: %s)\n", reason)
 		return nil
 	}
 
@@ -286,7 +290,11 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 
 	decCorr := evaluatePolicy(corrResp, &rf.cfg)
 	if !decCorr.Allowed {
-		fmt.Fprintln(out, "(corrected command blocked by security policy)")
+		reason := strings.TrimSpace(decCorr.Reason)
+		if reason == "" {
+			reason = "security policy"
+		}
+		fmt.Fprintf(out, "(corrected command blocked by security policy: %s)\n", reason)
 		return nil
 	}
 

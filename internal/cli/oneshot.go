@@ -96,7 +96,11 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		return nil
 	}
 	if !dec.Allowed {
-		fmt.Fprintln(cmd.OutOrStdout(), "(command blocked by security policy)")
+		reason := strings.TrimSpace(dec.Reason)
+		if reason == "" {
+			reason = "security policy"
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "(blocked by security policy: %s)\n", reason)
 		return nil
 	}
 	if rf.preview {
