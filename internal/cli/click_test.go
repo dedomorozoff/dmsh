@@ -287,10 +287,10 @@ func TestModelMenuCursorFollowsSelection(t *testing.T) {
 	if row := frameRow(t, m, r.y); !strings.Contains(row, visible[1].name) {
 		t.Fatalf("the clickable row does not show the selected model:\n%s", row)
 	}
-	if v := m.renderView(); v.Cursor == nil || v.Cursor.Position.Y != r.y {
+	if v := m.renderView(); v.Cursor == nil || v.Cursor.Y != r.y {
 		got := -1
 		if v.Cursor != nil {
-			got = v.Cursor.Position.Y
+			got = v.Cursor.Y
 		}
 		t.Errorf("cursor row = %d, want the selected row %d", got, r.y)
 	}

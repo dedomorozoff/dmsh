@@ -2193,27 +2193,6 @@ func (m *tuiModel) showModel() {
 	}
 }
 
-func (m *tuiModel) showTodo() {
-	if m.s.todos == nil {
-		m.addLine("todo list is not available")
-		return
-	}
-	items := m.s.todos.Items()
-	if len(items) == 0 {
-		m.addLine(fmt.Sprintf("%stodo list is empty.%s", colorGray, colorReset))
-		return
-	}
-	m.addLine(fmt.Sprintf("\n%s=== todo (%d open) ===%s", colorBold+colorCyan, m.s.todos.Open(), colorReset))
-	for _, it := range items {
-		if it.Done {
-			m.addLine(fmt.Sprintf("  %s[%d] %s (done)%s", colorGray, it.ID, it.Task, colorReset))
-			continue
-		}
-		m.addLine(fmt.Sprintf("  %s[%d]%s %s", colorYellow, it.ID, colorReset, it.Task))
-	}
-	m.addLine("")
-}
-
 // firstNonEmpty возвращает первое непустое значение — для настроек,
 // которые могли остаться пустыми в конфиге.
 func firstNonEmpty(values ...string) string {

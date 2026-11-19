@@ -190,7 +190,7 @@ func TestDirMenuClickOpensFolder(t *testing.T) {
 
 	idx := dirIndexOf(t, m, "beta")
 	x, y := m.dirMenuRowPoint(idx)
-	m = click(m, x, y)
+	_ = click(m, x, y)
 
 	wd, _ := os.Getwd()
 	if wd != filepath.Join(root, "beta") {
