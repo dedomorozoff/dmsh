@@ -70,9 +70,33 @@ func errorHint(err error) string {
 }
 
 func exitCode(err error) int {
-	// Keep a stable non-zero default; specific codes can be refined later.
 	if err == nil {
 		return 0
 	}
+	if isUsageError(err) {
+		return 2
+	}
 	return 1
+}
+
+// isUsageError reports argument/flag/command usage errors that should map to exit code 2.
+func isUsageError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, p := range []string{
+		"unknown command",
+		"unknown flag",
+		"unknown shorthand flag",
+		"flag needs an argument",
+		"invalid argument",
+		"requires at least",
+		"requires at most",
+		"accepts",
+		"if any flags in the group",
+		"interactive mode is not supported with --json",
+	} {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
 }
