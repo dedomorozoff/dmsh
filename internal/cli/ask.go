@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +49,7 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 			if err != nil {
 				if errors.Is(err, errCancelQuestion) {
 					if rf.jsonOut {
-						return writeJSON(cmd.OutOrStdout(), map[string]any{"cancelled": true})
+						return writeJSON(cmd.OutOrStdout(), map[string]any{"ok": false, "cancelled": true})
 					}
 					fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
 					return nil
@@ -57,7 +58,11 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 			}
 			_ = evaluatePolicy(resp, &rf.cfg)
 			if rf.jsonOut {
-				return writeJSON(cmd.OutOrStdout(), resp)
+				out := map[string]any{"ok": true, "response": resp}
+				if resp.Intent == prompt.IntentAskClarification {
+					out["needs_input"] = true
+				}
+				return writeJSON(cmd.OutOrStdout(), out)
 			}
 			return nil
 		},

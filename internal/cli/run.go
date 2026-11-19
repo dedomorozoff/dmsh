@@ -56,7 +56,8 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 			dec := evaluatePolicy(resp, &rf.cfg)
 			if rf.jsonOut {
-				return writeJSON(cmd.OutOrStdout(), map[string]any{
+				out := map[string]any{
+					"ok":       true,
 					"response": resp,
 					"policy": map[string]any{
 						"allowed": dec.Allowed,
@@ -65,7 +66,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					},
 					"executable": resp.Intent == prompt.IntentRunCommand && resp.Command != "",
 					"executed":   false,
-				})
+				}
+				if resp.Intent == prompt.IntentAskClarification {
+					out["needs_input"] = true
+				}
+				return writeJSON(cmd.OutOrStdout(), out)
 			}
 			if resp.Intent != prompt.IntentRunCommand {
 				return nil

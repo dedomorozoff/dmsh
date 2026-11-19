@@ -71,7 +71,8 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 
 	dec := evaluatePolicy(resp, &rf.cfg)
 	if rf.jsonOut {
-		return writeJSON(cmd.OutOrStdout(), map[string]any{
+		out := map[string]any{
+			"ok":       true,
 			"response": resp,
 			"policy": map[string]any{
 				"allowed": dec.Allowed,
@@ -80,7 +81,11 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 			},
 			"executable": hasExecutableCommand(resp),
 			"executed":   false,
-		})
+		}
+		if resp.Intent == prompt.IntentAskClarification {
+			out["needs_input"] = true
+		}
+		return writeJSON(cmd.OutOrStdout(), out)
 	}
 
 	if !hasExecutableCommand(resp) {
