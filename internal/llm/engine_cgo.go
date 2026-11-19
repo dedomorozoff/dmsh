@@ -32,6 +32,8 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"github.com/dedomorozoff/dmsh/internal/model"
 )
 
 func init() {
@@ -54,6 +56,12 @@ type cgoEngine struct {
 func newLocalEngine(p Params) (Engine, error) {
 	if p.ModelPath == "" {
 		return nil, errors.New("llm: empty model path")
+	}
+	if checked, err := model.VerifySHA256Sidecar(p.ModelPath); err != nil {
+		return nil, fmt.Errorf("llm: model integrity check failed: %w", err)
+	} else if checked {
+		// Контрольная сумма подтверждена перед загрузкой в llama.cpp.
+		_ = checked
 	}
 	cPath := C.CString(p.ModelPath)
 	defer C.free(unsafe.Pointer(cPath))
