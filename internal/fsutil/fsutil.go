@@ -18,9 +18,12 @@ const (
 // Существующий файл тоже подтягивается к 0600: права 0644, выставленные
 // прошлой версией dmsh, иначе остались бы навсегда.
 func WritePrivate(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
-		return fmt.Errorf("create dir %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		return fmt.Errorf("create dir %s: %w", dir, err)
 	}
+	// Tighten existing directory permissions as well.
+	_ = os.Chmod(dir, dirPerm)
 	if err := os.WriteFile(path, data, filePerm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
@@ -31,9 +34,11 @@ func WritePrivate(path string, data []byte) error {
 
 // AppendPrivate открывает файл на дозапись, создавая его с правами 0600.
 func AppendPrivate(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
-		return nil, fmt.Errorf("create dir %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		return nil, fmt.Errorf("create dir %s: %w", dir, err)
 	}
+	_ = os.Chmod(dir, dirPerm)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filePerm)
 	if err != nil {
 		return nil, err

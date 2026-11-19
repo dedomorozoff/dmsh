@@ -30,7 +30,7 @@ func TestWritePrivateTightensExistingFile(t *testing.T) {
 		t.Fatalf("content = %q, want %q", data, "new")
 	}
 	if runtime.GOOS != "windows" {
-		assertPerm(t, path, DirPerm)
+		assertPerm(t, path, FilePerm)
 		assertPerm(t, nested, DirPerm)
 	}
 }
