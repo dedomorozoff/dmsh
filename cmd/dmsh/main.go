@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -11,27 +12,45 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/llm"
 )
 
+const (
+	exitGeneral  = 1
+	exitUsage    = 2
+	exitConfig   = 3
+	exitProvider = 4
+)
+
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run executes the CLI with provided args and writers, returning the process exit code.
+func run(args []string, stdout, stderr io.Writer) int {
 	cmd := cli.NewRootCmd()
+	cmd.SetArgs(args)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
 	if err := cmd.Execute(); err != nil {
-		if wantsJSON(os.Args[1:]) {
+		code := exitCode(err)
+		if wantsJSON(args) {
 			payload := map[string]any{
 				"ok":    false,
 				"error": err.Error(),
+				"kind":  errorKind(err),
 				"hint":  errorHint(err),
 			}
-			if code := exitCode(err); code != 1 {
+			if code != exitGeneral {
 				payload["exit_code"] = code
 			}
-			_ = json.NewEncoder(os.Stdout).Encode(payload)
-			os.Exit(exitCode(err))
+			_ = json.NewEncoder(stdout).Encode(payload)
+			return code
 		}
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(stderr, err)
 		if hint := errorHint(err); hint != "" && !strings.Contains(err.Error(), "dmsh doctor") {
-			fmt.Fprintln(os.Stderr, "hint:", hint)
+			fmt.Fprintln(stderr, "hint:", hint)
 		}
-		os.Exit(exitCode(err))
+		return code
 	}
+	return 0
 }
 
 func wantsJSON(args []string) bool {
@@ -56,14 +75,17 @@ func errorHint(err error) string {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
+	case isUsageError(err):
+		return "run with --help for usage"
+	case isConfigError(err):
+		return "check configuration with `dmsh config show` or `dmsh doctor`"
 	case strings.Contains(msg, "proxy"):
 		return "check proxy settings with `dmsh config show` or `dmsh doctor`"
-	case strings.Contains(msg, "config"):
-		return "run `dmsh doctor` for diagnostics"
-	case strings.Contains(msg, "api key"), strings.Contains(msg, "unauthorized"), strings.Contains(msg, "401"):
+	case strings.Contains(msg, "api key"), strings.Contains(msg, "unauthorized"), strings.Contains(msg, " 401"), strings.Contains(msg, "401 "),
+		strings.Contains(msg, "forbidden"), strings.Contains(msg, " 403"), strings.Contains(msg, "403 "):
 		return "set POLLINATIONS_API_KEY or configure remote_api_key; run `dmsh doctor`"
-	case strings.Contains(msg, "model"):
-		return "run `dmsh doctor` to check model/provider configuration"
+	case isProviderError(err):
+		return "check provider/model/network with `dmsh config show` or `dmsh doctor`"
 	default:
 		return "run `dmsh doctor` for diagnostics"
 	}
@@ -78,15 +100,21 @@ func exitCode(err error) int {
 		if code := ec.ExitCode(); code > 0 {
 			return code
 		}
-		return 1
+		return exitGeneral
 	}
-	if isUsageError(err) {
-		return 2
+	switch {
+	case isUsageError(err):
+		return exitUsage
+	case isConfigError(err):
+		return exitConfig
+	case isProviderError(err):
+		return exitProvider
+	default:
+		return exitGeneral
 	}
-	return 1
 }
 
-// isUsageError reports argument/flag/command usage errors that should map to exit code 2.
+// isUsageError reports argument/flag/command usage errors.
 func isUsageError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	for _, p := range []string{
@@ -97,7 +125,9 @@ func isUsageError(err error) bool {
 		"invalid argument",
 		"requires at least",
 		"requires at most",
-		"accepts",
+		"accepts at least",
+		"accepts at most",
+		"accepts ",
 		"if any flags in the group",
 		"interactive mode is not supported with --json",
 	} {
@@ -106,4 +136,91 @@ func isUsageError(err error) bool {
 		}
 	}
 	return false
+}
+
+// isConfigError reports configuration load/parse/validation/path errors.
+func isConfigError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, p := range []string{
+		"parse config",
+		"read config",
+		"marshal config",
+		"config path",
+		"config:",
+		"invalid mode ",
+		"invalid remote_base_url",
+		"out of range",
+		"invalid regex pattern",
+		"failed to save config",
+		"failed to load config",
+		"config is invalid",
+	} {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isProviderError reports provider, model, and network/API errors.
+func isProviderError(err error) bool {
+	if errors.Is(err, llm.ErrNoLocalModel) || errors.Is(err, llm.ErrNotBuiltWithCGO) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, p := range []string{
+		"unknown provider",
+		"no local gguf",
+		"model not found",
+		"model_path",
+		"llm:",
+		"api key",
+		"unauthorized",
+		"forbidden",
+		" 401",
+		"401 ",
+		"http 401",
+		" 403",
+		"403 ",
+		"http 403",
+		"connection refused",
+		"no such host",
+		"dial tcp",
+		"i/o timeout",
+		"context deadline exceeded",
+		"tls handshake",
+		"endpoint",
+		"ollama",
+		"pollinations",
+		"provider=",
+	} {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func errorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ee *cli.ExitError
+	if errors.As(err, &ee) {
+		return "exec"
+	}
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		return "exec"
+	}
+	switch {
+	case isUsageError(err):
+		return "usage"
+	case isConfigError(err):
+		return "config"
+	case isProviderError(err):
+		return "provider"
+	default:
+		return "general"
+	}
 }
