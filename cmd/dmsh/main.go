@@ -15,6 +15,7 @@ func main() {
 			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
 				"ok":    false,
 				"error": err.Error(),
+				"hint":  "run `dmsh doctor` for diagnostics",
 			})
 		} else {
 			fmt.Fprintln(os.Stderr, err)
