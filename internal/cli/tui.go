@@ -1272,6 +1272,15 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cursorPos = nextWordPos(m.cursorPos, m.input)
 	case "alt+d":
 		m.input = deleteWordForward(m.input, &m.cursorPos)
+	default:
+		if m.showActionBar() {
+			ks := strings.ToLower(msg.Keystroke())
+			for i, key := range actionBarKeys {
+				if key == ks {
+					return m.runActionBar(i)
+				}
+			}
+		}
 	}
 	return m, nil
 }
@@ -2139,15 +2148,16 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sCtrl+A/E/U/K%s   — start/end/delete-to-start/delete-to-end", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+R/S%s       — history search", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+N%s          — next history", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sAlt+B/F/D%s      — word back/forward/delete", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+W%s         — delete word back", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+L%s         — clear screen", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %sCtrl+O%s         — model menu (install / switch)", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("%sMouse:%s click the folder / mode / model / proxy in the status line, or a row in any window — it does what Enter does (turn off with %s--mouse=false%s)",
+	m.addLine(fmt.Sprintf("  %sAlt+B/F/D%s      - word back/forward/delete", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sAlt+R/E/S%s      - retry / explain / shell (after a command)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+W%s         - delete word back", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+L%s         - clear screen", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+O%s         - model menu (install / switch)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("%sMouse:%s click the folder / mode / model / proxy in the status line, or a row in any window - it does what Enter does (turn off with %s--mouse=false%s)",
 		colorBold, colorReset, colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %swheel%s           - scroll output, and the list in a window", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sscrollbar%s        - click the right edge to jump through the history", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s[ retry ]%s        - buttons under the answer: retry, explain, shell", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s[ retry ]%s        - buttons under the answer: retry, explain, shell (or Alt+R/E/S)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sTab%s            — complete slash command", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sShift+Tab%s      — cycle modes (ai → help → terminal)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s↑/↓%s            — previous / next command from history", colorYellow, colorReset))

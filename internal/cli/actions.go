@@ -28,6 +28,21 @@ var actionBarItems = []actionBar{
 	{label: "shell", cmd: "/shell"},
 }
 
+var actionBarKeys = []string{"alt+r", "alt+e", "alt+s"}
+
+func actionBarKeyLabel(idx int) string {
+	switch idx {
+	case 0:
+		return "Alt+R"
+	case 1:
+		return "Alt+E"
+	case 2:
+		return "Alt+S"
+	default:
+		return ""
+	}
+}
+
 // showActionBar — нужна ли панель. Показываем только после выполненной
 // команды: перед первым запросом предлагать «повторить» бессмысленно, а
 // постоянная строка в кадре стоила бы места зря.
@@ -46,8 +61,12 @@ func (m tuiModel) actionBarSegments() []statusSegment {
 		if i > 0 {
 			segs = append(segs, statusSegment{text: "   "})
 		}
+		label := item.label
+		if hint := actionBarKeyLabel(i); hint != "" {
+			label = fmt.Sprintf("%s %s%s%s", item.label, colorGray, hint, colorCyan)
+		}
 		segs = append(segs, statusSegment{
-			text: fmt.Sprintf("%s[ %s ]%s", colorCyan, item.label, colorReset),
+			text: fmt.Sprintf("%s[ %s ]%s", colorCyan, label, colorReset),
 			act:  clickRetry + clickAction(i),
 		})
 	}

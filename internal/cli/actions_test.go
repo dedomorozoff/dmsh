@@ -48,11 +48,15 @@ func TestActionBarButtonsMatchRenderedText(t *testing.T) {
 		if i >= len(regions) {
 			t.Fatalf("no region for the %q button", item.label)
 		}
-		row := frameRow(t, m, regions[i].y)
-		if r := regions[i]; r.x1 > len(row) {
+		r := regions[i]
+		row := frameRow(t, m, r.y)
+		if r.x1 > len(row) {
 			t.Fatalf("region %+v does not fit the row", r)
-		} else if got := strings.TrimSpace(row[r.x0:r.x1]); got != "[ "+item.label+" ]" {
-			t.Errorf("button %d covers %q, want %q", i, got, "[ "+item.label+" ]")
+		}
+		got := strings.TrimSpace(stripANSI(row[r.x0:r.x1]))
+		want := "[ " + item.label + " " + actionBarKeyLabel(i) + " ]"
+		if got != want {
+			t.Errorf("button %d covers %q, want %q", i, got, want)
 		}
 	}
 }
