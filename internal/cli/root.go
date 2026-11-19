@@ -146,6 +146,12 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	pf.IntVar(&rf.cfg.ProxyPort, "proxy-port", rf.cfg.ProxyPort, "proxy port (0 = default for the protocol)")
 	pf.StringVar(&rf.cfg.ProxyUser, "proxy-user", rf.cfg.ProxyUser, "proxy login")
 	pf.StringVar(&rf.cfg.ProxyPassword, "proxy-password", rf.cfg.ProxyPassword, "proxy password")
+	// Секреты из конфига не должны светиться в --help/completion usage.
+	for _, name := range []string{"api-key", "proxy-password", "proxy-user"} {
+		if f := pf.Lookup(name); f != nil && f.DefValue != "" {
+			f.DefValue = ""
+		}
+	}
 	pf.StringVar(&rf.cfg.NoProxy, "no-proxy", rf.cfg.NoProxy, "hosts that bypass the proxy, comma-separated (host, host:port, .suffix or CIDR)")
 	pf.BoolVar(&rf.noTools, "no-tools", false, "disable LLM tool (function) calls")
 	pf.StringVar(&rf.cfg.ModelPath, "model", rf.cfg.ModelPath, "path to GGUF model file")
