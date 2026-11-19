@@ -10,6 +10,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func mustEvalPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
+}
+
+func samePath(a, b string) bool {
+	return mustEvalPath(a) == mustEvalPath(b)
+}
+
 func click(m tuiModel, x, y int) tuiModel {
 	mm, _ := m.handleMouseClick(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	return mm.(tuiModel)
@@ -169,8 +180,8 @@ func TestDirMenuEnterChangesDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	if wd != filepath.Join(root, "alpha") {
-		t.Fatalf("cwd = %q, want the alpha subdirectory", wd)
+	if !samePath(wd, filepath.Join(root, "alpha")) {
+		t.Fatalf("cwd = %q, want the alpha subdirectory %q", wd, filepath.Join(root, "alpha"))
 	}
 	if m.state != tuiDirMenu {
 		t.Fatalf("state = %v, want the menu to stay open for a deeper dive", m.state)
@@ -193,8 +204,8 @@ func TestDirMenuClickOpensFolder(t *testing.T) {
 	_ = click(m, x, y)
 
 	wd, _ := os.Getwd()
-	if wd != filepath.Join(root, "beta") {
-		t.Fatalf("cwd = %q, want the beta subdirectory", wd)
+	if !samePath(wd, filepath.Join(root, "beta")) {
+		t.Fatalf("cwd = %q, want the beta subdirectory %q", wd, filepath.Join(root, "beta"))
 	}
 }
 
@@ -237,12 +248,12 @@ func TestDirMenuParentGoesUp(t *testing.T) {
 	m = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	wd, _ := os.Getwd()
-	if wd != parent {
+	if !samePath(wd, parent) {
 		t.Fatalf("cwd = %q, want the parent %q", wd, parent)
 	}
 	parentMenu := m.openDirMenu()
 	for _, it := range parentMenu.visibleDirItems() {
-		if it.name == ".." && it.path == wd {
+		if it.name == ".." && samePath(it.path, wd) {
 			t.Fatalf("the root directory must not offer a parent: %+v", it)
 		}
 	}

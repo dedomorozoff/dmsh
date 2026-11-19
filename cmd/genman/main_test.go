@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,7 +20,17 @@ const canary = "dmsh-secret-canary-4f2a"
 // пользователя, и всё это писалось в репозиторий.
 func TestGenerateDoesNotLeakUserConfig(t *testing.T) {
 	cfgDir := t.TempDir()
+	t.Setenv("HOME", cfgDir)
+	// config.Load reads UserConfigDir: XDG_CONFIG_HOME on Linux, %AppData% on Windows,
+	// ~/Library/Application Support on macOS.
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	t.Setenv("AppData", cfgDir)
+	t.Setenv("LOCALAPPDATA", cfgDir)
+
 	configDir := filepath.Join(cfgDir, "dmsh")
+	if runtime.GOOS == "darwin" {
+		configDir = filepath.Join(cfgDir, "Library", "Application Support", "dmsh")
+	}
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -30,12 +41,6 @@ func TestGenerateDoesNotLeakUserConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(body), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	// config.Load читает UserConfigDir: на unix это XDG_CONFIG_HOME, на
-	// windows — %AppData%. Оба перенаправляем в отдельную папку.
-	t.Setenv("XDG_CONFIG_HOME", cfgDir)
-	t.Setenv("AppData", cfgDir)
-	t.Setenv("LOCALAPPDATA", cfgDir)
-
 	loaded, err := config.Load()
 	if err != nil {
 		t.Fatalf("the test setup must be readable: %v", err)

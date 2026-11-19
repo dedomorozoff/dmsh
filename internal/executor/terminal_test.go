@@ -20,14 +20,14 @@ func interactiveShell() string {
 
 // exitScript — ввод, который заставляет интерактивную оболочку завершиться.
 func exitScript() string {
-	return TerminalScript("exit")
+	return TerminalScript("exit 0")
 }
 
 // Однострочная команда с последующим выходом. Именно этот путь использует
 // терминальный режим TUI, и именно он зависал с "\n" на Windows: ConPTY
 // отдаёт оболочке строки только с CRLF.
 func commandScript(command string) string {
-	return TerminalScript(command, "exit")
+	return TerminalScript(command, "exit 0")
 }
 
 func TestShellInteractiveArgs(t *testing.T) {
