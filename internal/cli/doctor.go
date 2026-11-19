@@ -167,7 +167,15 @@ func doctorModelCheck(cfg config.Config) doctorCheck {
 		if info.IsDir() {
 			return doctorCheck{Name: "model", Status: doctorWarn, Message: "model_path points to a directory", Detail: cfg.ModelPath}
 		}
-		return doctorCheck{Name: "model", Status: doctorOK, Message: "configured model file found", Detail: fmt.Sprintf("%s (%d MB)", cfg.ModelPath, info.Size()/1024/1024)}
+		detail := fmt.Sprintf("%s (%d MB)", cfg.ModelPath, info.Size()/1024/1024)
+		if checked, verr := model.VerifySHA256Sidecar(cfg.ModelPath); verr != nil {
+			return doctorCheck{Name: "model", Status: doctorFail, Message: "model checksum verification failed", Detail: detail + ": " + verr.Error()}
+		} else if checked {
+			detail += ", sha256 verified"
+		} else {
+			detail += ", no .sha256 sidecar"
+		}
+		return doctorCheck{Name: "model", Status: doctorOK, Message: "configured model file found", Detail: detail}
 	}
 	models, err := dl.ListAllModels()
 	if err != nil {

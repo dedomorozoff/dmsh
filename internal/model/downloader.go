@@ -255,6 +255,11 @@ func (d *Downloader) DownloadCtx(ctx context.Context, info ModelInfo, progress f
 		return "", fmt.Errorf("rename tmp file: %w", err)
 	}
 
+	if strings.TrimSpace(info.SHA256) != "" {
+		sum := strings.ToLower(strings.TrimSpace(info.SHA256)) + "  " + filepath.Base(destPath) + "\n"
+		_ = os.WriteFile(destPath+".sha256", []byte(sum), 0o644)
+	}
+
 	return destPath, nil
 }
 
