@@ -2,15 +2,17 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 func newAskCmd(rf *rootFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "ask <query>",
 		Short: "Explain how to do something without executing",
 		Args:  cobra.MinimumNArgs(1),
@@ -25,23 +27,47 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 			}
 			defer s.close()
 			s.setAutoYes(rf.autoYes)
-			s.printNotice(cmd.ErrOrStderr())
+			if rf.jsonOut {
+				s.notice = ""
+			} else {
+				s.printNotice(cmd.ErrOrStderr())
+			}
 
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			s.SetInput(NewBufioReader(cmd.InOrStdin()))
-			resp, err := askWithFollowUp(ctx, s, "ask", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			if rf.jsonOut {
+				// JSON-контракт на stdout: стрим, баннеры и вопросы не пишем.
+				out = io.Discard
+			} else {
+				s.SetInput(NewBufioReader(cmd.InOrStdin()))
+			}
+			resp, err := askWithFollowUp(ctx, s, "ask", input, out, errW)
 			if err != nil {
 				if errors.Is(err, errCancelQuestion) {
+					if rf.jsonOut {
+						return writeJSON(cmd.OutOrStdout(), map[string]any{"cancelled": true})
+					}
 					fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
 					return nil
 				}
 				return err
 			}
 			_ = evaluatePolicy(resp, &rf.cfg)
+			if rf.jsonOut {
+				return writeJSON(cmd.OutOrStdout(), resp)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&rf.jsonOut, "json", false, "print the response as JSON to stdout (no banners/colors; diagnostics to stderr)")
+	return cmd
+}
+
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(v)
 }

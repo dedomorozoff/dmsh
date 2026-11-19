@@ -24,7 +24,9 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	}
 	defer s.close()
 	s.setAutoYes(rf.autoYes)
-	s.printNotice(cmd.ErrOrStderr())
+	if !rf.jsonOut {
+		s.printNotice(cmd.ErrOrStderr())
+	}
 
 	// Читаем stdin если он не TTY (pipe-режим)
 	stdin := cmd.InOrStdin()
@@ -49,10 +51,18 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		ctx = context.Background()
 	}
 
-	s.SetInput(NewBufioReader(cmd.InOrStdin()))
-	resp, err := askWithFollowUp(ctx, s, "run", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
+	if rf.jsonOut {
+		out = io.Discard
+	} else {
+		s.SetInput(NewBufioReader(cmd.InOrStdin()))
+	}
+	resp, err := askWithFollowUp(ctx, s, "run", input, out, errW)
 	if err != nil {
 		if errors.Is(err, errCancelQuestion) {
+			if rf.jsonOut {
+				return writeJSON(cmd.OutOrStdout(), map[string]any{"cancelled": true})
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
 			return nil
 		}
@@ -60,6 +70,18 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 	}
 
 	dec := evaluatePolicy(resp, &rf.cfg)
+	if rf.jsonOut {
+		return writeJSON(cmd.OutOrStdout(), map[string]any{
+			"response": resp,
+			"policy": map[string]any{
+				"allowed": dec.Allowed,
+				"risk":    dec.Risk,
+				"reason":  dec.Reason,
+			},
+			"executable": hasExecutableCommand(resp),
+			"executed":   false,
+		})
+	}
 
 	if !hasExecutableCommand(resp) {
 		return nil

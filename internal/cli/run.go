@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/dedomorozoff/dmsh/internal/config"
@@ -13,7 +14,7 @@ import (
 )
 
 func newRunCmd(rf *rootFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "run <request>",
 		Short: "Suggest and execute a command from a natural language request",
 		Args:  cobra.MinimumNArgs(1),
@@ -28,20 +29,43 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 			defer s.close()
 			s.setAutoYes(rf.autoYes)
-			s.printNotice(cmd.ErrOrStderr())
+			if !rf.jsonOut {
+				s.printNotice(cmd.ErrOrStderr())
+			}
 
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			s.SetInput(NewBufioReader(cmd.InOrStdin()))
-			resp, err := askWithFollowUp(ctx, s, "run", input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			out, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			if rf.jsonOut {
+				out = io.Discard
+			} else {
+				s.SetInput(NewBufioReader(cmd.InOrStdin()))
+			}
+			resp, err := askWithFollowUp(ctx, s, "run", input, out, errW)
 			if err != nil {
 				if errors.Is(err, errCancelQuestion) {
+					if rf.jsonOut {
+						return writeJSON(cmd.OutOrStdout(), map[string]any{"cancelled": true})
+					}
 					fmt.Fprintln(cmd.OutOrStdout(), "(cancelled)")
 					return nil
 				}
 				return err
+			}
+			dec := evaluatePolicy(resp, &rf.cfg)
+			if rf.jsonOut {
+				return writeJSON(cmd.OutOrStdout(), map[string]any{
+					"response": resp,
+					"policy": map[string]any{
+						"allowed": dec.Allowed,
+						"risk":    dec.Risk,
+						"reason":  dec.Reason,
+					},
+					"executable": resp.Intent == prompt.IntentRunCommand && resp.Command != "",
+					"executed":   false,
+				})
 			}
 			if resp.Intent != prompt.IntentRunCommand {
 				return nil
@@ -53,6 +77,8 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			return runCommandWithCorrection(ctx, s, rf, resp, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+	cmd.Flags().BoolVar(&rf.jsonOut, "json", false, "print the result as JSON to stdout (no banners/colors; diagnostics to stderr)")
+	return cmd
 }
 
 // evaluatePolicy — обёртка над policy.Evaluate, удобная для render-слоя.

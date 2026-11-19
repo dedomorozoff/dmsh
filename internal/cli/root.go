@@ -18,6 +18,7 @@ type rootFlags struct {
 	preview bool
 	autoYes bool
 	noTools bool
+	jsonOut bool
 }
 
 // providerValue — pflag.Value для провайдера инференса: принимает только
@@ -166,6 +167,7 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	pf.BoolVar(&rf.preview, "preview", false, "show the command with highlighted options and require confirmation before executing")
 	pf.BoolVar(&rf.autoYes, "yes", false, "automatically approve confirmations (for scripting)")
 	pf.BoolVar(&rf.cfg.Mouse, "mouse", rf.cfg.Mouse, "mouse in the TUI: click the folder in the status line to change directory (--mouse=false keeps the terminal's own text selection)")
+	cmd.Flags().BoolVar(&rf.jsonOut, "json", false, "print the result as JSON to stdout (no banners/colors; diagnostics to stderr)")
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))
