@@ -180,7 +180,7 @@ type tuiModel struct {
 // Mode switches come first so they are visible in the truncated menu.
 var slashCommands = []string{
 	"/mode", "/shell", "/help", "/clear", "/exit", "/quit",
-	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
+	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
@@ -193,6 +193,7 @@ var slashDesc = map[string]string{
 	"/setup":    "choose how dmsh connects to the LLM",
 	"/settings": "network settings: proxy, endpoint, connection test",
 	"/proxy":    "shortcut for /settings",
+	"/mouse":    "toggle mouse UI / native text selection and copy",
 	"/todo":     "the model's task list: click a task to mark it done",
 	"/stats":    "session statistics",
 	"/export":   "export the last command",
@@ -1591,6 +1592,29 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.addLine(fmt.Sprintf("%s=== todo (%d open) ===%s",
 			colorBold+colorCyan, todoOpenCount(m), colorReset))
 		return m.openTodoMenu(), nil
+	case line == "/mouse", strings.HasPrefix(line, "/mouse "):
+		want := !m.rf.cfg.Mouse
+		if arg := strings.TrimSpace(strings.TrimPrefix(line, "/mouse")); arg != "" {
+			switch strings.ToLower(arg) {
+			case "on", "true", "1", "yes":
+				want = true
+			case "off", "false", "0", "no":
+				want = false
+			default:
+				m.addLine(fmt.Sprintf("%susage: /mouse [on|off]%s", colorYellow, colorReset))
+				return m, nil
+			}
+		}
+		m.rf.cfg.Mouse = want
+		if err := config.Save(m.rf.cfg); err != nil {
+			m.addLine(fmt.Sprintf("%sMouse setting applied for this session, but could not save config: %v%s", colorYellow, err, colorReset))
+		}
+		if want {
+			m.addLine("Mouse: on (UI clicks/wheel). To select and copy text, run /mouse off.")
+		} else {
+			m.addLine("Mouse: off (native terminal text selection/copy enabled). Run /mouse on to restore UI clicks.")
+		}
+		return m, nil
 	case line == "/retry":
 		lastInput := m.s.lastRequest()
 		if lastInput == "" {
@@ -2132,11 +2156,12 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/model%s       — current model", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/models%s      — model menu: files or provider catalog", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/setup%s       — how dmsh connects to the LLM, and how to change it", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/settings%s    — network settings: proxy, endpoint, connection test", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/shell%s       — open a shell in this window", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/bind%s        — key bindings", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/help%s        — this info", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("  %s/exit%s        — exit (or Ctrl+Q)", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/settings%s    - network settings: proxy, endpoint, connection test", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/mouse%s       - toggle mouse UI / native text selection+copy", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/shell%s       - open a shell in this window", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/bind%s        - key bindings", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/help%s        - this info", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/exit%s        - exit (or Ctrl+Q)", colorYellow, colorReset))
 }
 
 func (m *tuiModel) showKeyBindings() {
@@ -2153,8 +2178,9 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sCtrl+W%s         - delete word back", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+L%s         - clear screen", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+O%s         - model menu (install / switch)", colorYellow, colorReset))
-	m.addLine(fmt.Sprintf("%sMouse:%s click the folder / mode / model / proxy in the status line, or a row in any window - it does what Enter does (turn off with %s--mouse=false%s)",
-		colorBold, colorReset, colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("%sMouse:%s click the folder / mode / model / proxy in the status line, or a row in any window - it does what Enter does",
+		colorBold, colorReset))
+	m.addLine(fmt.Sprintf("  %s/mouse%s          - toggle off to select and copy text (native terminal selection), on to restore UI clicks", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %swheel%s           - scroll output, and the list in a window", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sscrollbar%s        - click the right edge to jump through the history", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s[ retry ]%s        - buttons under the answer: retry, explain, shell (or Alt+R/E/S)", colorYellow, colorReset))

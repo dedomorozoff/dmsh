@@ -32,6 +32,7 @@ var paletteItems = []paletteItem{
 	{name: "/model", desc: "show the current model"},
 	{name: "/models", label: "models: pick, install or switch", desc: "model menu: local .gguf files or the provider's live catalog"},
 	{name: "/settings", label: "settings: proxy and endpoint", desc: "network settings: proxy mode, address, bypass list, connection test"},
+	{name: "/mouse", label: "mouse: toggle UI clicks / text selection", desc: "turn mouse off to select and copy text, on to restore UI clicks"},
 	{name: "/todo", label: "todo: the model's task list", desc: "open the list; click or Enter a task to toggle it done"},
 	{name: "/stats", desc: "session statistics"},
 	{name: "/history", desc: "recent commands"},

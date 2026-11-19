@@ -89,6 +89,28 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		showSettings(out, s)
 	case line == "/setup":
 		showSetup(out, s)
+	case line == "/mouse", strings.HasPrefix(line, "/mouse "):
+		want := !s.cfg.Mouse
+		if arg := strings.TrimSpace(strings.TrimPrefix(line, "/mouse")); arg != "" {
+			switch strings.ToLower(arg) {
+			case "on", "true", "1", "yes":
+				want = true
+			case "off", "false", "0", "no":
+				want = false
+			default:
+				fmt.Fprintf(out, "%susage: /mouse [on|off]%s\n", yellow, reset)
+				return false
+			}
+		}
+		s.cfg.Mouse = want
+		if err := config.Save(s.cfg); err != nil {
+			fmt.Fprintf(out, "%sMouse setting applied for this session, but could not save config: %v%s\n", yellow, err, reset)
+		}
+		if want {
+			fmt.Fprintln(out, "Mouse: on. In TUI, run /mouse off to enable native text selection/copy.")
+		} else {
+			fmt.Fprintln(out, "Mouse: off. In TUI, native terminal text selection/copy is enabled; run /mouse on to restore UI clicks.")
+		}
 	case line == "/retry":
 		if s.lastInput == "" {
 			fmt.Fprintf(out, "%sNo previous request to retry.%s\n", yellow, reset)
@@ -548,8 +570,9 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/model%s     — show the provider and model currently in use\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/models%s    — list local models or the provider's catalog\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/setup%s     — show how dmsh connects to the LLM and how to change it\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/settings%s  — show network settings (proxy, endpoint) and how to change them\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/retry%s     — re-run last request with alternate approach\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/settings%s  - show network settings (proxy, endpoint) and how to change them\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/mouse%s     - toggle mouse UI / native text selection+copy (TUI)\n", yellow, reset)
+	fmt.Fprintf(out, "  %s/retry%s     - re-run last request with alternate approach\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/export%s    — copy last command to clipboard or /export last > file\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/alias%s     — list aliases; /alias name=\"request\" to create; /alias -d name to delete\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/bind%s      — show key bindings\n", yellow, reset)
