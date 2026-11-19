@@ -111,10 +111,16 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
+				if rf.jsonOut {
+					return fmt.Errorf("interactive mode is not supported with --json; provide a query or use `ask`/`run`")
+				}
 				return runInteractive(cmd, rf)
 			}
 			input := strings.TrimSpace(strings.Join(args, " "))
 			if input == "" {
+				if rf.jsonOut {
+					return fmt.Errorf("interactive mode is not supported with --json; provide a query or use `ask`/`run`")
+				}
 				return runInteractive(cmd, rf)
 			}
 			return runOneShot(cmd, rf, input)
