@@ -255,6 +255,9 @@ func (s *session) close() {
 		_ = s.searchEngine.Close()
 		s.searchEngine = nil
 	}
+	if s.debug != nil {
+		s.debug.close()
+	}
 	// Save history
 	_ = s.saveHistory()
 	s.saveTurns()

@@ -64,8 +64,11 @@ func (s *session) chatWithTools(
 		msgs = append(msgs, msg)
 		for _, call := range msg.ToolCalls {
 			s.recordToolStep()
+			s.debugf("tool call name=%s", call.Name)
 			fmt.Fprintf(out, "\n%s[tool]%s %s%s%s\n", cyan, reset, cyan, call.Name, reset)
 			result := s.runToolCall(ctx, call, out)
+			okRes := strings.Contains(result, `"ok":true`)
+			s.debugf("tool result name=%s ok=%v bytes=%d", call.Name, okRes, len(result))
 			// Список todo — состояние пользователя: без этой строки он видит
 			// только пустую строку и метку [tool], а результат уходит одной
 			// модели.

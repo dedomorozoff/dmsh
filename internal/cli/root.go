@@ -14,11 +14,13 @@ import (
 
 // rootFlags holds common flags shared across subcommands.
 type rootFlags struct {
-	cfg     config.Config
-	preview bool
-	autoYes bool
-	noTools bool
-	jsonOut bool
+	cfg       config.Config
+	preview   bool
+	autoYes   bool
+	noTools   bool
+	jsonOut   bool
+	debug     bool
+	debugFile string
 }
 
 // providerValue — pflag.Value для провайдера инференса: принимает только
@@ -174,6 +176,8 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	pf.BoolVar(&rf.autoYes, "yes", false, "automatically approve confirmations (for scripting)")
 	pf.BoolVar(&rf.cfg.Mouse, "mouse", rf.cfg.Mouse, "mouse in the TUI: click the folder in the status line to change directory (--mouse=false keeps the terminal's own text selection)")
 	cmd.Flags().BoolVar(&rf.jsonOut, "json", false, "print the result as JSON to stdout (no banners/colors; diagnostics to stderr)")
+	pf.BoolVar(&rf.debug, "debug", false, "write debug log with timings, provider and retry details")
+	pf.StringVar(&rf.debugFile, "debug-file", "dmsh-debug.log", "path to debug log file (used with --debug)")
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))

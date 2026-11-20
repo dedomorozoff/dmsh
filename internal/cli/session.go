@@ -81,6 +81,7 @@ type session struct {
 	turns        []prompt.Turn // последние 5 пар диалога
 	stdinCtx     string        // данные из stdin pipe
 	autoYes      bool          // --yes: пропускать все подтверждения
+	debug        *debugLogger
 }
 
 // recordRequest запоминает запрос пользователя и увеличивает счётчик.
@@ -124,6 +125,26 @@ func (s *session) statsSnapshot() SessionStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stats
+}
+
+func (s *session) setupDebug(enabled bool, path string) error {
+	if !enabled {
+		return nil
+	}
+	l, err := newDebugLogger(true, path, s.cfg.APIKey(), s.cfg.RemoteAPIKey, s.cfg.ProxyPassword)
+	if err != nil {
+		return err
+	}
+	s.debug = l
+	s.debugf("session provider=%s model=%s remote=%s proxy=%v", s.provider, s.cfg.RemoteModel, s.cfg.RemoteBaseURL, s.cfg.Proxy().Mode)
+	return nil
+}
+
+func (s *session) debugf(format string, args ...any) {
+	if s == nil || s.debug == nil {
+		return
+	}
+	s.debug.printf(format, args...)
 }
 
 // lastRequest возвращает последний запрос пользователя (/retry, уточнения).

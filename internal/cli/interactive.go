@@ -28,6 +28,9 @@ func runInteractive(cmd *cobra.Command, rf *rootFlags) error {
 		return err
 	}
 	defer s.close()
+	if err := s.setupDebug(rf.debug, rf.debugFile); err != nil {
+		fmt.Fprintf(errOut, "%sDebug log: %v%s\n", colorYellow, err, colorReset)
+	}
 	s.setAutoYes(rf.autoYes)
 	s.printNotice(errOut)
 

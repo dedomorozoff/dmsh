@@ -42,6 +42,7 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 
 	pr := newStreamPrinter(out)
 
+	s.debugf("request start provider=%s mode=%s tools=%v", s.provider, s.cfg.Mode, s.promptToolNames())
 	var err error
 	if tc, ok := s.toolEngine(); ok {
 		err = s.chatWithTools(ctx, tc, system, user, opts, pr, out)
@@ -50,7 +51,13 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	}
 
 	fmt.Fprintln(out)
-	s.recordRequestMetrics(pr, time.Since(start), err)
+	dur := time.Since(start)
+	s.recordRequestMetrics(pr, dur, err)
+	chunks, chars, streamDur, ttft := 0, 0, time.Duration(0), time.Duration(0)
+	if pr != nil {
+		chunks, chars, streamDur, ttft = pr.metrics()
+	}
+	s.debugf("request end dur=%s ttft=%s chunks=%d chars=%d stream=%s err=%v", dur, ttft, chunks, chars, streamDur, err)
 
 	if err != nil {
 		return prompt.Response{}, pr.String(), err
@@ -91,9 +98,11 @@ func (s *session) finishAnswer(ctx context.Context, system, user string, opts ll
 	}
 
 	// Ремонт JSON при неудаче
+	s.debugf("response parse failed, attempting repair: %v", perr)
 	repair := user + "\n\nPrevious response was not valid JSON. Return strictly a single JSON object matching the schema, with no text around it."
 	raw2, err := s.engine.Generate(ctx, system, repair, opts)
 	if err != nil {
+		s.debugf("repair generate failed: %v", err)
 		return prompt.Response{}, rawStr, err
 	}
 	resp2, perr2 := prompt.Parse(raw2)

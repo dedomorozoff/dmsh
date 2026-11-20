@@ -27,6 +27,9 @@ func newAskCmd(rf *rootFlags) *cobra.Command {
 				return err
 			}
 			defer s.close()
+			if err := s.setupDebug(rf.debug, rf.debugFile); err != nil {
+				return err
+			}
 			s.setAutoYes(rf.autoYes)
 			if rf.jsonOut {
 				s.notice = ""
