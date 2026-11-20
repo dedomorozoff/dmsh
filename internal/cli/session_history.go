@@ -198,10 +198,10 @@ func sanitizeSessionName(name string) string {
 }
 
 // loadTurns восстанавливает multi-turn контекст из файла, если включён
-// ResumeSession. Ошибки чтения/парсинга там игнорируются - это не
-// обязательный файл.
+// ResumeSession или явно задано имя сессии. Ошибки чтения/парсинга
+// игнорируются - это не обязательный файл.
 func (s *session) loadTurns() {
-	if !s.cfg.ResumeSession {
+	if !s.cfg.ResumeSession && s.sessionName == "" {
 		return
 	}
 	path := sessionFileNamed(s.sessionName)
@@ -224,7 +224,7 @@ func (s *session) loadTurns() {
 
 // saveTurns сохраняет multi-turn контекст по завершении сессии.
 func (s *session) saveTurns() {
-	if !s.cfg.ResumeSession {
+	if !s.cfg.ResumeSession && s.sessionName == "" {
 		return
 	}
 	path := sessionFileNamed(s.sessionName)
