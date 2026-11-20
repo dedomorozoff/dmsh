@@ -97,7 +97,7 @@ func newConfigCmd() *cobra.Command {
 	showCmd.Flags().BoolVar(&showJSON, "json", false, "Output configuration as JSON (secrets masked)")
 	cmd.AddCommand(showCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	setCmd := &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set configuration parameter",
 		Args:  cobra.ExactArgs(2),
@@ -257,7 +257,9 @@ func newConfigCmd() *cobra.Command {
 			fmt.Fprintf(out, "Successfully set %s to %v\n", args[0], val)
 			return nil
 		},
-	})
+		ValidArgsFunction: completeConfigSet,
+	}
+	cmd.AddCommand(setCmd)
 
 	return cmd
 }

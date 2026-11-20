@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -144,7 +145,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 
 	cmd.AddCommand(downloadCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	pathCmd := &cobra.Command{
 		Use:   "path [name]",
 		Short: "Show path to a downloaded model",
 		Args:  cobra.ExactArgs(1),
@@ -156,9 +157,11 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 			fmt.Fprintln(cmd.OutOrStdout(), d.ModelPath(args[0]))
 			return nil
 		},
-	})
+		ValidArgsFunction: completeDownloadedModels,
+	}
+	cmd.AddCommand(pathCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	useCmd := &cobra.Command{
 		Use:   "use [name]",
 		Short: "Set a downloaded model as default",
 		Args:  cobra.ExactArgs(1),
@@ -168,6 +171,90 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("model %q not found in %s", args[0], d.ModelPath(""))
 			}
 			setDefault(cmd, args[0])
+			return nil
+		},
+		ValidArgsFunction: completeDownloadedModels,
+	}
+	cmd.AddCommand(useCmd)
+
+	verifyCmd := &cobra.Command{
+		Use:   "verify [name...]",
+		Short: "Verify model integrity against .sha256 sidecar files",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d := model.New("")
+			paths, err := resolveModelVerifyTargets(d, args)
+			if err != nil {
+				return err
+			}
+			if len(paths) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "no models to verify")
+				return nil
+			}
+			var failed []string
+			for _, p := range paths {
+				name := filepath.Base(p)
+				checked, verr := model.VerifySHA256Sidecar(p)
+				switch {
+				case verr != nil:
+					msg := verr.Error()
+					if checked {
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: FAIL (%s)\n", name, msg)
+					} else {
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: FAIL (%s)\n", name, msg)
+					}
+					failed = append(failed, name)
+				case !checked:
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: NO CHECKSUM (missing .sha256 sidecar)\n", name)
+					failed = append(failed, name)
+				default:
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: OK (sha256 verified)\n", name)
+				}
+			}
+			if len(failed) > 0 {
+				return fmt.Errorf("verification failed for %d model(s)", len(failed))
+			}
+			return nil
+		},
+		ValidArgsFunction: completeDownloadedModels,
+	}
+	cmd.AddCommand(verifyCmd)
+
+	removeCmd := &cobra.Command{
+		Use:   "remove <name> [name...]",
+		Short: "Remove downloaded model files and their checksum sidecars",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d := model.New("")
+			for _, name := range args {
+				if err := removeLocalModelFile(d, name); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", name)
+			}
+			return nil
+		},
+		ValidArgsFunction: completeDownloadedModels,
+	}
+	cmd.AddCommand(removeCmd)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "prune",
+		Short: "Remove incomplete .gguf.tmp downloads from the models directory",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			d := model.New("")
+			removed, err := pruneIncompleteModelFiles(d.ModelPath(""))
+			if err != nil {
+				return err
+			}
+			if len(removed) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "nothing to prune")
+				return nil
+			}
+			for _, name := range removed {
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", name)
+			}
 			return nil
 		},
 	})
@@ -307,6 +394,127 @@ func progressFn(out io.Writer) func(dl, total int) {
 			pct := dl * 100 / total
 			fmt.Fprintf(out, "\r  %d%% (%d / %d MB)", pct, dl/1024/1024, total/1024/1024)
 		}
+	}
+}
+
+func resolveModelVerifyTargets(d *model.Downloader, args []string) ([]string, error) {
+	if len(args) == 0 {
+		models, err := d.ListAllModels()
+		if err != nil {
+			return nil, err
+		}
+		paths := make([]string, 0, len(models))
+		for _, m := range models {
+			paths = append(paths, d.ModelPath(m.Name))
+		}
+		return paths, nil
+	}
+	paths := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "" {
+			return nil, fmt.Errorf("model name cannot be empty")
+		}
+		if fi, err := os.Stat(arg); err == nil && !fi.IsDir() {
+			paths = append(paths, arg)
+			continue
+		}
+		name := arg
+		if err := validateModelName(name); err == nil {
+			path := d.ModelPath(name)
+			if _, err := os.Stat(path); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return nil, fmt.Errorf("model %q not found", name)
+				}
+				return nil, err
+			}
+			paths = append(paths, path)
+			continue
+		}
+		if _, err := os.Stat(arg); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("model %q not found", arg)
+			}
+			return nil, err
+		}
+		paths = append(paths, arg)
+	}
+	return paths, nil
+}
+
+func validateModelName(name string) error {
+	if name == "" || name == "." || name == ".." {
+		return fmt.Errorf("invalid model name %q", name)
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return fmt.Errorf("invalid model name %q", name)
+	}
+	if filepath.Base(name) != name {
+		return fmt.Errorf("invalid model name %q", name)
+	}
+	return nil
+}
+
+// removeLocalModelFile удаляет скачанный .gguf и его .sha256 рядом.
+// Имя проверяется: произвольный путь удалить нельзя.
+func removeLocalModelFile(d *model.Downloader, name string) error {
+	if err := validateModelName(name); err != nil {
+		return err
+	}
+	path := d.ModelPath(name)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("model %q not found", name)
+		}
+		return fmt.Errorf("model %q: %w", name, err)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove %q: %w", name, err)
+	}
+	_ = os.Remove(model.SHA256SidecarPath(path))
+	return nil
+}
+
+// pruneIncompleteModelFiles удаляет недокачанные *.gguf.tmp из каталога
+// моделей. Пустой результат — не ошибка: чистить может быть нечего.
+func pruneIncompleteModelFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var removed []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".gguf.tmp") {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				return removed, fmt.Errorf("remove %s: %w", name, err)
+			}
+			removed = append(removed, name)
+		}
+	}
+	return removed, nil
+}
+
+// verifyModelStatus сверяет файл с .sha256 рядом и возвращает короткий статус
+// для интерфейса. ok=false означает и ошибку чтения, и несовпадение хеша, и
+// отсутствие sidecar — всё это для целостности одинаково плохо.
+func verifyModelStatus(path string) (ok bool, msg string) {
+	checked, verr := model.VerifySHA256Sidecar(path)
+	switch {
+	case verr != nil:
+		if checked {
+			return false, "checksum mismatch"
+		}
+		return false, verr.Error()
+	case !checked:
+		return false, "no checksum"
+	default:
+		return true, "sha256 ok"
 	}
 }
 

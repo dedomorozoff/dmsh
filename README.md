@@ -318,6 +318,8 @@ command — the full text always goes to the audit log.
 | `/setup` | how dmsh connects to the LLM: provider (auto / local / pollinations), remote model, local GGUF, endpoint — pick one and it rebuilds the engine and writes `config.json` |
 | `/settings`, `/proxy` | network settings window: proxy mode, protocol, host, port, login, password, bypass list, endpoint, connection test |
 | `/stats` | session statistics |
+| `/search [text]`, `/find` | search the output: matches are highlighted, `Enter` keeps them and `Esc` clears; `Ctrl+F` opens it too |
+| `/copy [N]` | copy the last output block to the clipboard, or the last `N` lines (no mouse needed) |
 | `/export` | copy last command to clipboard or `/export last > file` |
 | `/alias` | list aliases; `/alias name="request"`; `/alias -d name` |
 | `/history` | show history |
@@ -343,6 +345,8 @@ Plain words like `help`, `clear`, `pwd`, `history`, `exit`, `quit`,
 | `Esc` / `Ctrl+C` | cancel / stop streaming |
 | `Ctrl+A/E/U/K` | start/end/delete-to-start/delete-to-end of line |
 | `Ctrl+R/S` | history search |
+| `Ctrl+F` | search the output; `Enter` keeps the highlight, `Esc` clears it |
+| `F3` / `Shift+F3` | next / previous output match |
 | `Ctrl+N` | next history entry |
 | `Alt+B/F/D` | move / delete by word |
 | `Ctrl+W` | delete word back |

@@ -59,6 +59,10 @@ func (m *tuiModel) trimScrollback() {
 	kept := append([]string{note}, lines[dropped:]...)
 	m.content = strings.Join(kept, "\n")
 	m.scrollbackLines = len(kept)
+	// Индексы строк уехали вместе с отброшенным началом: совпадения надо
+	// собрать заново, иначе F3 прыгал бы не туда.
+	m.findMatches = nil
+	m.findIdx = 0
 }
 
 // auditLogPath — куда пишется полный вывод команд. В подсказке важно дать

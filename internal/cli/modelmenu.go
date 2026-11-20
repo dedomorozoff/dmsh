@@ -35,6 +35,11 @@ type modelDoneMsg struct {
 	path       string
 	downloaded bool
 	loaded     bool
+	verified   bool     // проверка целостности завершена
+	removed    bool     // модель удалена
+	pruned     bool     // недокачанные .tmp удалены
+	status     string   // текст результата проверки
+	names      []string // удалённые .tmp
 	err        error
 }
 
@@ -224,6 +229,9 @@ func (m tuiModel) visibleModelItems() []modelMenuItem {
 
 // modelItemNote собирает подпись справа от имени модели. У локальной это
 // размер файла и требуемая память, у удалённой — владелец из каталога.
+// modelItemNote СЃРѕР±РёСЂР°РµС‚ РїРѕРґРїРёСЃСЊ СЃРїСЂР°РІР° РѕС‚ РёРјРµРЅРё РјРѕРґРµР»Рё. Р”Р»СЏ СЃРєР°С‡Р°РЅРЅС‹С…
+// Р»РѕРєР°Р»СЊРЅС‹С… С„Р°Р№Р»РѕРІ РїРѕРєР°Р·С‹РІР°РµРј СЂР°Р·РјРµСЂ Рё С…РµС€ РёР· .sha256 (РµСЃР»Рё РµСЃС‚СЊ), РґР»СЏ
+// РєР°С‚Р°Р»РѕРіР° вЂ” Р·Р°РјРµС‚РєСѓ РїСЂРѕРІР°Р№РґРµСЂР°, РґР»СЏ СЂРµРєРѕРјРµРЅРґР°С†РёР№ вЂ” РїСЂРёРјРµСЂРЅС‹Р№ СЂР°Р·РјРµСЂ Рё RAM.
 func modelItemNote(it modelMenuItem) string {
 	if it.remote {
 		if it.note != "" {
@@ -231,19 +239,48 @@ func modelItemNote(it modelMenuItem) string {
 		}
 		return "provider model"
 	}
+	if it.installed {
+		size := humanSize(it.sizeBytes)
+		hash := localModelHash(it.name)
+		switch {
+		case size != "" && hash != "":
+			return size + ", " + hash
+		case hash != "":
+			return hash
+		case size != "":
+			return size
+		}
+		return "installed"
+	}
 	size := humanSize(it.sizeBytes)
 	ram := ""
 	if it.info != nil {
-		ram = fmt.Sprintf("  %d+ GB RAM", it.info.MinRAM)
+		if it.info.MinRAM > 0 {
+			ram = fmt.Sprintf(", %d+ GB RAM", it.info.MinRAM)
+		}
 		if it.info.SizeMB > 0 {
 			size = fmt.Sprintf("~%.1f GB", float64(it.info.SizeMB)/1024)
 		}
-	} else if size == "" {
-		size = "installed"
-	} else {
-		size += " (installed)"
+	}
+	if size == "" {
+		size = "not installed"
 	}
 	return size + ram
+}
+
+// localModelHash С‡РёС‚Р°РµС‚ sidecar СЂСЏРґРѕРј СЃ РјРѕРґРµР»СЊСЋ Рё РІРѕР·РІСЂР°С‰Р°РµС‚ РєРѕСЂРѕС‚РєСѓСЋ РјРµС‚РєСѓ.
+// РџРѕР»РЅСѓСЋ РїСЂРѕРІРµСЂРєСѓ СЃРѕРґРµСЂР¶РёРјРѕРіРѕ РґРµР»Р°РµС‚ verify (F5): Р·РґРµСЃСЊ РІР°Р¶РЅР° РїРѕРґСЃРєР°Р·РєР°, Р° РЅРµ
+// С‡С‚РµРЅРёРµ РіРёРіР°Р±Р°Р№С‚РѕРІ РЅР° РєР°Р¶РґС‹Р№ РєР°РґСЂ.
+func localModelHash(name string) string {
+	path := model.New("").ModelPath(name)
+	sum, err := model.ReadSHA256Sidecar(model.SHA256SidecarPath(path))
+	if err != nil || sum == "" {
+		return "no checksum"
+	}
+	if len(sum) > 12 {
+		sum = sum[:12] + "вЂ¦"
+	}
+	return "sha256:" + sum
 }
 
 // menuMaxVisible — сколько моделей помещается в меню. Список едет за
@@ -305,8 +342,18 @@ func (m tuiModel) menuRows() ([]string, int) {
 		if m.remoteMenu() {
 			action = "switch"
 		}
-		rows = append(rows, fitWidth(fmt.Sprintf("%s↑/↓ pick, type to filter, %sEnter%s %s, %sEsc%s close%s",
-			colorGray, colorYellow, colorReset, action, colorYellow, colorReset, colorReset), m.width))
+		hint := fmt.Sprintf("%s↑/↓ pick, type to filter, %sEnter%s %s, %sEsc%s close%s",
+			colorGray, colorYellow, colorReset, action, colorYellow, colorReset, colorReset)
+		if !m.remoteMenu() {
+			hint = fmt.Sprintf("%s↑/↓ pick, type to filter, %sEnter%s %s, %sDel%s remove, %sF5%s verify, %sF6%s prune, %sEsc%s close%s",
+				colorGray,
+				colorYellow, colorReset, action,
+				colorYellow, colorReset,
+				colorYellow, colorReset,
+				colorYellow, colorReset,
+				colorYellow, colorReset, colorReset)
+		}
+		rows = append(rows, fitWidth(hint, m.width))
 	}
 	return rows, first
 }
@@ -398,6 +445,21 @@ func (m tuiModel) handleModelMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.menuCmd()
 	case msg.Code == tea.KeyEnter:
 		return m.menuEnter()
+	case msg.Code == tea.KeyDelete:
+		if m.modelBusy || m.remoteMenu() {
+			return m, m.menuCmd()
+		}
+		return m.menuRemove(items)
+	case msg.Code == tea.KeyF5:
+		if m.modelBusy || m.remoteMenu() {
+			return m, m.menuCmd()
+		}
+		return m.menuVerify(items)
+	case msg.Code == tea.KeyF6:
+		if m.modelBusy || m.remoteMenu() {
+			return m, m.menuCmd()
+		}
+		return m.menuPrune()
 	}
 	if m.modelBusy {
 		return m, m.menuCmd()
@@ -516,6 +578,111 @@ func (m tuiModel) startModelLoad(name string) (tea.Model, tea.Cmd) {
 			err = m.s.switchModel(path)
 		}
 		m.modelDoneCh <- modelDoneMsg{path: path, loaded: true, err: err}
+	}()
+
+	return m, waitForModel(m.modelCh, m.modelDoneCh)
+}
+
+// menuRemove удаляет выбранный скачанный .gguf и .sha256 рядом с ним.
+// Рекомендованную, но ещё не скачанную модель удалить нельзя — её нет на диске.
+func (m tuiModel) menuRemove(items []modelMenuItem) (tea.Model, tea.Cmd) {
+	if len(items) == 0 || m.modelIdx < 0 || m.modelIdx >= len(items) {
+		return m, nil
+	}
+	it := items[m.modelIdx]
+	if !it.installed || it.remote {
+		return m, nil
+	}
+	d := model.New("")
+	path := d.ModelPath(it.name)
+	if err := removeLocalModelFile(d, it.name); err != nil {
+		m.addLine(fmt.Sprintf("%sremove %s: %v%s", colorRed, it.name, err, colorReset))
+		return m, nil
+	}
+	// Если удалили текущую модель, сессия больше не должна считать её активной.
+	if m.s != nil && filepath.Base(m.s.cfg.ModelPath) == it.name {
+		m.s.cfg.ModelPath = ""
+		if m.rf != nil {
+			m.rf.cfg.ModelPath = ""
+		}
+	}
+	m.modelItems = m.buildModelMenu()
+	vis := m.visibleModelItems()
+	if m.modelIdx >= len(vis) {
+		m.modelIdx = len(vis) - 1
+	}
+	if m.modelIdx < 0 {
+		m.modelIdx = 0
+	}
+	m.addLine(fmt.Sprintf("%sRemoved%s %s", colorGray, colorReset, it.name))
+	_ = path
+	return m, nil
+}
+
+// menuPrune удаляет недокачанные *.gguf.tmp из каталога моделей.
+func (m tuiModel) menuPrune() (tea.Model, tea.Cmd) {
+	d := model.New("")
+	removed, err := pruneIncompleteModelFiles(d.ModelPath(""))
+	if err != nil {
+		m.addLine(fmt.Sprintf("%sprune: %v%s", colorRed, err, colorReset))
+		return m, nil
+	}
+	m.modelItems = m.buildModelMenu()
+	vis := m.visibleModelItems()
+	if m.modelIdx >= len(vis) {
+		m.modelIdx = len(vis) - 1
+	}
+	if m.modelIdx < 0 {
+		m.modelIdx = 0
+	}
+	if len(removed) == 0 {
+		m.addLine("(nothing to prune)")
+		return m, nil
+	}
+	for _, name := range removed {
+		m.addLine(fmt.Sprintf("%sRemoved%s %s", colorGray, colorReset, name))
+	}
+	return m, nil
+}
+
+// menuVerify сверяет выбранную модель с .sha256 в фоне: файл большой, и ждать
+// в цикле событий нельзя.
+func (m tuiModel) menuVerify(items []modelMenuItem) (tea.Model, tea.Cmd) {
+	if len(items) == 0 || m.modelIdx < 0 || m.modelIdx >= len(items) {
+		return m, nil
+	}
+	it := items[m.modelIdx]
+	if !it.installed || it.remote {
+		return m, nil
+	}
+	path := model.New("").ModelPath(it.name)
+	ctx, cancel := context.WithCancel(context.Background())
+	m.modelCancel = cancel
+	m.modelBusy = true
+	m.modelProgress = -1
+	m.modelStatus = "verifying " + it.name
+	m.modelCh = make(chan modelProgMsg, 1)
+	m.modelDoneCh = make(chan modelDoneMsg, 1)
+
+	go func() {
+		if ctx.Err() != nil {
+			m.modelDoneCh <- modelDoneMsg{path: path, verified: true, err: context.Canceled}
+			return
+		}
+		ok, status := verifyModelStatus(path)
+		if ok {
+			status = "OK (sha256 verified)"
+		} else {
+			switch status {
+			case "no checksum":
+				status = "NO CHECKSUM (missing .sha256 sidecar)"
+			case "checksum mismatch":
+				status = "FAIL (sha256 mismatch)"
+			default:
+				status = "FAIL (" + status + ")"
+			}
+		}
+		m.modelDoneCh <- modelDoneMsg{path: path, verified: true, status: status}
 	}()
 
 	return m, waitForModel(m.modelCh, m.modelDoneCh)

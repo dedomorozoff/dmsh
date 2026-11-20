@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// clipboardWrite — точка подмены для тестов: в CI нет ни clip, ни xclip.
+var clipboardWrite = copyToClipboard
+
 // copyToClipboard копирует текст в буфер обмена.
 // Поддерживает Windows (clip), macOS (pbcopy), Linux (xclip/xsel).
 func copyToClipboard(text string) error {

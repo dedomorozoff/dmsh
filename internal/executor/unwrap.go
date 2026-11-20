@@ -38,12 +38,12 @@ func shellKind(shell string) string {
 		base = base[i+1:]
 	}
 	base = strings.TrimSuffix(base, ".exe")
-	switch {
-	case base == "powershell" || base == "pwsh":
+	switch base {
+	case "powershell", "pwsh":
 		return "powershell"
-	case base == "cmd":
+	case "cmd":
 		return "cmd"
-	case base == "sh" || base == "bash" || base == "zsh" || base == "fish" || base == "dash" || base == "ksh":
+	case "sh", "bash", "zsh", "fish", "dash", "ksh":
 		return "unix"
 	default:
 		return ""

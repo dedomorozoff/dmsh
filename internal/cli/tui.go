@@ -38,6 +38,7 @@ const (
 	tuiTodoMenu // список задач модели с чекбоксами
 	tuiTerminal // терминал в окне приложения: экран занимает весь кадр
 	tuiRunning  // команда выполняется: ввод свободен, виден спиннер
+	tuiFind     // поиск по выводу: запрос в строке ввода, совпадения подсвечены
 )
 
 type tuiModel struct {
@@ -55,6 +56,9 @@ type tuiModel struct {
 	// scrollbackLines — сколько строк в content с последней обрезки. Сам
 	// транскрипт не ограничен: его обрезает scrollback.go.
 	scrollbackLines int
+	// bodyCache — транскрипт, уже свёрнутый по ширине. Указатель, потому что
+	// модель копируется по значению: кеш должен переживать копирование.
+	bodyCache *bodyWrapCache
 
 	width  int
 	height int
@@ -80,6 +84,11 @@ type tuiModel struct {
 
 	searchQuery string
 	searchIdx   int
+	// findQuery — поиск по выводу. Живёт и после закрытия окна поиска:
+	// подсветка остаётся, пока её не снимут Esc, а F3 листает совпадения.
+	findQuery   string
+	findMatches []int
+	findIdx     int
 
 	tabMatches []string
 	tabIdx     int
@@ -180,7 +189,7 @@ type tuiModel struct {
 // Mode switches come first so they are visible in the truncated menu.
 var slashCommands = []string{
 	"/mode", "/shell", "/help", "/clear", "/exit", "/quit",
-	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/stats", "/bind", "/alias", "/export", "/retry",
+	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/stats", "/bind", "/alias", "/export", "/retry", "/search", "/copy",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
@@ -196,6 +205,8 @@ var slashDesc = map[string]string{
 	"/mouse":    "toggle mouse UI / native text selection and copy",
 	"/todo":     "the model's task list: click a task to mark it done",
 	"/stats":    "session statistics",
+	"/search":   "search the output (Ctrl+F), F3 for the next match",
+	"/copy":     "copy the last block of output to the clipboard",
 	"/export":   "export the last command",
 	"/alias":    "manage aliases",
 	"/history":  "recent commands",
@@ -370,7 +381,7 @@ func (w *tuiWriter) Write(p []byte) (int, error) {
 }
 
 func NewTuiModel(rf *rootFlags, s *session) tea.Model {
-	m := tuiModel{rf: rf, s: s, errW: io.Discard, modeLabel: string(rf.cfg.Mode), content: "", tabIdx: -1}
+	m := tuiModel{rf: rf, s: s, errW: io.Discard, modeLabel: string(rf.cfg.Mode), content: "", tabIdx: -1, bodyCache: &bodyWrapCache{width: -1}}
 	m.history = m.persistedHistory()
 	m.histIdx = len(m.history)
 	return m
@@ -537,20 +548,62 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if msg.downloaded {
+		switch {
+		case msg.pruned:
+			m.modelItems = m.buildModelMenu()
+			if m.modelIdx >= len(m.visibleModelItems()) {
+				m.modelIdx = len(m.visibleModelItems()) - 1
+			}
+			if m.modelIdx < 0 {
+				m.modelIdx = 0
+			}
+			if len(msg.names) == 0 {
+				m.addLine("(nothing to prune)")
+			} else {
+				for _, n := range msg.names {
+					m.addLine(fmt.Sprintf("%sRemoved%s %s", colorGray, colorReset, n))
+				}
+			}
+			return m, nil
+		case msg.removed:
+			name := filepath.Base(msg.path)
+			m.modelItems = m.buildModelMenu()
+			vis := m.visibleModelItems()
+			if m.modelIdx >= len(vis) {
+				m.modelIdx = len(vis) - 1
+			}
+			if m.modelIdx < 0 {
+				m.modelIdx = 0
+			}
+			m.addLine(fmt.Sprintf("%sRemoved%s %s", colorGray, colorReset, name))
+			return m, nil
+		case msg.verified:
+			name := filepath.Base(msg.path)
+			status := msg.status
+			if status == "" {
+				status = "done"
+			}
+			if strings.HasPrefix(status, "OK") {
+				m.addLine(fmt.Sprintf("%s%s: %s%s", colorGreen, name, status, colorReset))
+			} else {
+				m.addLine(fmt.Sprintf("%s%s: %s%s", colorYellow, name, status, colorReset))
+			}
+			return m, nil
+		case msg.downloaded:
 			name := filepath.Base(msg.path)
 			m.addLine(fmt.Sprintf("(downloaded %s)", name))
 			return m.startModelLoad(name)
-		}
-		name := filepath.Base(msg.path)
-		m.modelItems = m.buildModelMenu()
-		for i, it := range m.modelItems {
-			if it.name == name {
-				m.modelIdx = i
+		default:
+			name := filepath.Base(msg.path)
+			m.modelItems = m.buildModelMenu()
+			for i, it := range m.modelItems {
+				if it.name == name {
+					m.modelIdx = i
+				}
 			}
+			m.addLine(fmt.Sprintf("(%smodel%s: %s)", colorCyan, colorReset, name))
+			return m, nil
 		}
-		m.addLine(fmt.Sprintf("(%smodel%s: %s)", colorCyan, colorReset, name))
-		return m, nil
 	case remoteModelsMsg:
 		// Каталог приходит после закрытия окна: сообщение просто игнорируем.
 		if m.state != tuiModelMenu {
@@ -674,6 +727,81 @@ func fitWidth(s string, width int) string {
 	return ansi.Truncate(s, width, "…") + reset
 }
 
+// bodyWrapCache хранит транскрипт, свёрнутый по текущей ширине. Кадр
+// перерисовывается на каждый токен модели, а пересборка четырёх тысяч строк
+// дороже самого кадра. Транскрипт дописывается только в конец, поэтому
+// кешируются все полные строки, а незаконченная последняя строка
+// сворачивается заново.
+type bodyWrapCache struct {
+	width int
+	// base — полные строки content, для которых посчитаны rows.
+	base string
+	rows []string
+	// completeRows — сколько первых rows относится к base. Хвост после них
+	// принадлежит незаконченной строке и при следующем кадре заменяется.
+	completeRows int
+	// highlight — запрос, которым подсвечены rows. Другой запрос требует
+	// пересборки: старые строки содержат старые маркеры.
+	highlight string
+}
+
+// wrappedContent возвращает content, свёрнутый по текущей ширине, и
+// переиспользует строки прошлого кадра. Смена ширины, обрезка скроллбека
+// или другое содержимое сбрасывают кеш: тогда всё пересчитывается.
+func (m tuiModel) wrappedContent() []string {
+	if m.content == "" {
+		return nil
+	}
+	complete, tail := m.content, ""
+	if i := strings.LastIndexByte(m.content, '\n'); i >= 0 {
+		complete, tail = m.content[:i+1], m.content[i+1:]
+	} else {
+		complete, tail = "", m.content
+	}
+
+	c := m.bodyCache
+	var rows []string
+	if c != nil && c.width == m.width && c.highlight == m.findQuery && strings.HasPrefix(complete, c.base) {
+		// Хвост прошлого кадра отбрасывается: он входит в complete заново.
+		rows = c.rows[:c.completeRows]
+		rows = append(rows, wrapText(complete[len(c.base):], m.width, m.findQuery)...)
+	} else {
+		rows = wrapText(complete, m.width, m.findQuery)
+	}
+	cacheRows := len(rows)
+	rows = append(rows, wrapText(tail, m.width, m.findQuery)...)
+	if c != nil {
+		c.width = m.width
+		c.base = complete
+		c.rows = rows
+		c.completeRows = cacheRows
+		c.highlight = m.findQuery
+	}
+	return rows
+}
+
+// wrapText режет текст на строки и сворачивает каждую по ширине. Один
+// завершающий перевод строки не создаёт пустой строки — он просто закрывает
+// последнюю. Совпадения поиска подсвечиваются после переноса: маркеры не
+// должны попасть под разрез строки.
+func wrapText(text string, width int, highlight string) []string {
+	if text == "" {
+		return nil
+	}
+	text = strings.TrimSuffix(text, "\n")
+	lines := strings.Split(text, "\n")
+	rows := make([]string, 0, len(lines))
+	for _, l := range lines {
+		for _, row := range hardWrap(l, width) {
+			if highlight != "" {
+				row = highlightMatches(row, highlight)
+			}
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
 // layoutRows builds the scrollable body rows and the input display rows for
 // the current width, wrapping any row wider than the terminal. Without this
 // the terminal soft-wraps long lines, so the frame no longer matches the
@@ -683,24 +811,9 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 	if m.state == tuiTerminal {
 		return m.terminalRows(), nil
 	}
-	var body strings.Builder
-	if m.content != "" {
-		body.WriteString(m.content)
-		if !strings.HasSuffix(m.content, "\n") {
-			body.WriteString("\n")
-		}
-	}
-	switch m.state {
-	case tuiSearch:
-		body.WriteString(m.searchPrompt() + colorGreen + m.input + "\n")
-	}
-
-	raw := strings.Split(body.String(), "\n")
-	if n := len(raw); n > 0 && raw[n-1] == "" {
-		raw = raw[:n-1]
-	}
-	for _, l := range raw {
-		bodyRows = append(bodyRows, hardWrap(l, m.width)...)
+	bodyRows = m.wrappedContent()
+	if m.state == tuiSearch {
+		bodyRows = append(bodyRows, hardWrap(m.searchPrompt()+colorGreen+m.input, m.width)...)
 	}
 
 	switch m.state {
@@ -722,21 +835,24 @@ func (m tuiModel) layoutRows() (bodyRows, inRows []string) {
 			// поступления.
 			inRows = append(inRows, hardWrap(m.runningLine(), m.width)...)
 		}
-		// Slash-command menu with descriptions while typing "/".
-		const maxVisible = 8
-		menu := m.menuList()
-		start, end := scrollWindow(m.tabIdx, len(menu), maxVisible)
-		for i, cmd := range menu[start:end] {
-			marker, style := "  ", colorGray
-			descStyle := colorGray
-			if start+i == m.tabIdx {
-				marker, style = "> ", colorYellow+colorBold
-				descStyle = ""
+		// Slash-command menu with descriptions while typing "/". В окне поиска
+		// по выводу оно не нужно: запрос может начинаться со слэша.
+		if m.state != tuiFind {
+			const maxVisible = 8
+			menu := m.menuList()
+			start, end := scrollWindow(m.tabIdx, len(menu), maxVisible)
+			for i, cmd := range menu[start:end] {
+				marker, style := "  ", colorGray
+				descStyle := colorGray
+				if start+i == m.tabIdx {
+					marker, style = "> ", colorYellow+colorBold
+					descStyle = ""
+				}
+				item := fmt.Sprintf("%s%s%s%s %s— %s%s", style, marker, cmd, colorReset, descStyle, slashDesc[cmd], colorReset)
+				inRows = append(inRows, hardWrap(fitWidth(item, m.width), m.width)...)
 			}
-			item := fmt.Sprintf("%s%s%s%s %s— %s%s", style, marker, cmd, colorReset, descStyle, slashDesc[cmd], colorReset)
-			inRows = append(inRows, hardWrap(fitWidth(item, m.width), m.width)...)
+			inRows = append(inRows, m.listFooter(start, end, len(menu), maxVisible)...)
 		}
-		inRows = append(inRows, m.listFooter(start, end, len(menu), maxVisible)...)
 	}
 	return bodyRows, inRows
 }
@@ -977,6 +1093,9 @@ func shortModelName(p string) string {
 }
 
 func (m tuiModel) buildPrompt() string {
+	if m.state == tuiFind {
+		return m.findPrompt()
+	}
 	cwd, _ := os.Getwd()
 	short := shortPath(cwd)
 	return fmt.Sprintf("%s[%s]%s > %s", colorGray, short, colorReset, colorReset)
@@ -1006,6 +1125,7 @@ func (m *tuiModel) clearContent() {
 	m.content = ""
 	m.scrollOffset = 0
 	m.scrollbackLines = 0
+	m.clearFind()
 }
 
 func (m *tuiModel) scrollUp() {
@@ -1127,6 +1247,19 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.state == tuiSearch {
 		return m.handleSearchKey(msg)
 	}
+	if m.state == tuiFind {
+		return m.handleFindKey(msg)
+	}
+	if msg.Code == tea.KeyF3 {
+		// F3 листает найденное и после закрытия окна поиска: подсветка
+		// остаётся на экране, пока её не снимут.
+		dir := 1
+		if msg.Mod&tea.ModShift != 0 {
+			dir = -1
+		}
+		m.findStep(dir)
+		return m, nil
+	}
 	if m.state == tuiConfirming {
 		return m.handleConfirmKey(msg)
 	}
@@ -1171,6 +1304,10 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.Code {
 	case tea.KeyEnter:
 		return m.handleEnter()
+	case tea.KeyEsc:
+		// Esc снимает подсветку поиска; без неё, как и раньше, ничего.
+		m.clearFind()
+		return m, nil
 	case tea.KeyTab:
 		// Shift+Tab приходит как KeyTab с модификатором Shift: он занят
 		// под переключение режима, обычный Tab остаётся комплитом.
@@ -1223,9 +1360,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursorPos--
 		}
 	case "ctrl+f":
-		if m.cursorPos < runeSliceLen(m.input) {
-			m.cursorPos++
-		}
+		// Ctrl+F — поиск по выводу, как в браузере и редакторах. Перемещение
+		// курсора вправо остаётся на стрелке (и на Ctrl+B влево).
+		return m.startFind(m.findQuery)
 	case "ctrl+n":
 		if m.menuSelect(1) {
 			return m, nil
@@ -1468,6 +1605,193 @@ func (m tuiModel) searchPrompt() string {
 	return fmt.Sprintf("%s(reverse-i-search)%s`%s': ", colorYellow, reset, m.searchQuery)
 }
 
+// startFind открывает поиск по выводу. Ctrl+F передаёт прошлый запрос:
+// повторное открытие продолжает с того же места, а не начинает с нуля.
+func (m tuiModel) startFind(query string) (tea.Model, tea.Cmd) {
+	m.state = tuiFind
+	m.input = query
+	m.cursorPos = runeSliceLen(query)
+	m.refreshFind()
+	return m, nil
+}
+
+// clearFind убирает подсветку и список совпадений. Запрос живёт отдельно от
+// строки ввода: после Enter подсветка должна остаться.
+func (m *tuiModel) clearFind() {
+	m.findQuery = ""
+	m.findMatches = nil
+	m.findIdx = 0
+}
+
+// refreshFind пересобирает совпадения по текущей строке ввода. Вызывается на
+// каждом символе: подсветка и переход к свежему совпадению идут следом.
+func (m *tuiModel) refreshFind() {
+	m.findQuery = strings.TrimSpace(m.input)
+	m.collectFind()
+	if len(m.findMatches) > 0 {
+		m.jumpToFindMatch()
+	}
+}
+
+// collectFind ищет запрос по строкам транскрипта, не считая ANSI-коды.
+// Индекс ставится на последнее совпадение: свежий вывод полезнее старого.
+func (m *tuiModel) collectFind() {
+	m.findMatches = m.findMatches[:0]
+	if q := m.findQuery; q != "" {
+		for i, line := range strings.Split(m.content, "\n") {
+			if containsFold(ansi.Strip(line), q) {
+				m.findMatches = append(m.findMatches, i)
+			}
+		}
+	}
+	m.findIdx = len(m.findMatches) - 1
+	if m.findIdx < 0 {
+		m.findIdx = 0
+	}
+}
+
+// findStep переходит к следующему (+1) или предыдущему (-1) совпадению и
+// прокручивает кадр так, чтобы оно было видно.
+func (m *tuiModel) findStep(dir int) {
+	if len(m.findMatches) == 0 {
+		m.collectFind()
+		if len(m.findMatches) == 0 {
+			return
+		}
+		m.jumpToFindMatch()
+		return
+	}
+	n := len(m.findMatches)
+	m.findIdx = ((m.findIdx+dir)%n + n) % n
+	m.jumpToFindMatch()
+}
+
+// jumpToFindMatch ставит текущее совпадение в середину окна. Строка ищется в
+// координатах транскрипта, а scrollOffset считается в строках экрана: одна
+// логическая строка может занять несколько.
+func (m *tuiModel) jumpToFindMatch() {
+	if m.height <= 0 || len(m.findMatches) == 0 {
+		return
+	}
+	row := m.rowOfLine(m.findMatches[m.findIdx])
+	rows, inRows := m.layoutRows()
+	avail := m.height - 1 - len(inRows)
+	if avail < 1 {
+		avail = 1
+	}
+	maxOffset := len(rows) - avail
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	off := len(rows) - avail - row + avail/2
+	if off < 0 {
+		off = 0
+	}
+	if off > maxOffset {
+		off = maxOffset
+	}
+	m.scrollOffset = off
+}
+
+// rowOfLine — экранная строка, с которой начинается логическая строка line.
+func (m tuiModel) rowOfLine(line int) int {
+	lines := strings.Split(m.content, "\n")
+	row := 0
+	for i := 0; i < line && i < len(lines); i++ {
+		row += len(hardWrap(lines[i], m.width))
+	}
+	return row
+}
+
+// findPrompt показывает счётчик совпадений. Без него окно поиска молчит:
+// непонятно, нашлось ли что-нибудь и где ты в списке.
+func (m tuiModel) findPrompt() string {
+	if len(m.findMatches) == 0 {
+		if m.findQuery != "" {
+			return fmt.Sprintf("%s(find: no matches)%s > ", colorYellow, colorReset)
+		}
+		return fmt.Sprintf("%s(find output)%s > ", colorYellow, colorReset)
+	}
+	return fmt.Sprintf("%s(find %d/%d)%s > ", colorYellow, m.findIdx+1, len(m.findMatches), colorReset)
+}
+
+// handleFindKey правит запрос и листает совпадения. Enter закрывает окно и
+// оставляет подсветку, Esc снимает её совсем.
+func (m tuiModel) handleFindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
+	case tea.KeyEnter:
+		m.state = tuiIdle
+		m.input = ""
+		m.cursorPos = 0
+		return m, nil
+	case tea.KeyEsc:
+		m.state = tuiIdle
+		m.input = ""
+		m.cursorPos = 0
+		m.clearFind()
+		return m, nil
+	case tea.KeyDown:
+		m.findStep(1)
+		return m, nil
+	case tea.KeyUp:
+		m.findStep(-1)
+		return m, nil
+	case tea.KeyF3:
+		dir := 1
+		if msg.Mod&tea.ModShift != 0 {
+			dir = -1
+		}
+		m.findStep(dir)
+		return m, nil
+	case tea.KeyBackspace:
+		m.deleteBackward()
+		m.refreshFind()
+		return m, nil
+	case tea.KeyDelete:
+		m.deleteForward()
+		m.refreshFind()
+		return m, nil
+	case tea.KeyLeft:
+		if m.cursorPos > 0 {
+			m.cursorPos--
+		}
+		return m, nil
+	case tea.KeyRight:
+		if m.cursorPos < runeSliceLen(m.input) {
+			m.cursorPos++
+		}
+		return m, nil
+	case tea.KeyHome:
+		m.cursorPos = 0
+		return m, nil
+	case tea.KeyEnd:
+		m.cursorPos = runeSliceLen(m.input)
+		return m, nil
+	case tea.KeyPgUp:
+		m.scrollBy(-(m.height - 3))
+		return m, nil
+	case tea.KeyPgDown:
+		m.scrollBy(m.height - 3)
+		return m, nil
+	}
+	switch msg.Keystroke() {
+	case "ctrl+g", "ctrl+c":
+		m.state = tuiIdle
+		m.input = ""
+		m.cursorPos = 0
+		m.clearFind()
+		return m, nil
+	case "ctrl+n", "ctrl+f":
+		m.findStep(1)
+		return m, nil
+	}
+	if isInputKey(msg) {
+		m.insertInput(msg.Text)
+		m.refreshFind()
+	}
+	return m, nil
+}
+
 func (m *tuiModel) deleteBackward() {
 	if m.cursorPos > 0 {
 		r := []rune(m.input)
@@ -1566,6 +1890,15 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 	case line == "/clear", line == "clear":
 		m.clearContent()
 		m.addLine("")
+	case line == "/search", line == "/find":
+		// Пустой запрос повторяет прошлый поиск: подсветка уже на экране, и
+		// удобнее продолжить её, чем начинать с чистого листа.
+		return m.startFind(m.findQuery)
+	case strings.HasPrefix(line, "/search "), strings.HasPrefix(line, "/find "):
+		parts := strings.SplitN(line, " ", 2)
+		return m.startFind(strings.TrimSpace(parts[1]))
+	case line == "/copy", strings.HasPrefix(line, "/copy "):
+		m.handleCopy(line)
 	case line == "/pwd", line == "pwd":
 		wd, _ := os.Getwd()
 		m.addLine(wd)
@@ -2161,6 +2494,8 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/shell%s       - open a shell in this window", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/bind%s        - key bindings", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/help%s        - this info", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/search%s      - search the output (Ctrl+F); F3 moves between matches", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/copy%s        - copy the last output block (or /copy N for N lines)", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/exit%s        - exit (or Ctrl+Q)", colorYellow, colorReset))
 }
 
@@ -2172,6 +2507,8 @@ func (m *tuiModel) showKeyBindings() {
 	m.addLine(fmt.Sprintf("  %sEsc%s / %sCtrl+C%s — cancel / stop", colorYellow, colorReset, colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+A/E/U/K%s   — start/end/delete-to-start/delete-to-end", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+R/S%s       — history search", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sCtrl+F%s         — search the output; Enter keeps the highlight, Esc clears it", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %sF3/Shift+F3%s    — next / previous output match", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sCtrl+N%s          — next history", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sAlt+B/F/D%s      - word back/forward/delete", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %sAlt+R/E/S%s      - retry / explain / shell (after a command)", colorYellow, colorReset))
@@ -2256,7 +2593,7 @@ func (m *tuiModel) handleExport(line string) {
 		m.addLine(fmt.Sprintf("%s✓ Written to %s%s", colorGreen, filePath, colorReset))
 		return
 	}
-	if err := copyToClipboard(lastCmd); err != nil {
+	if err := clipboardWrite(lastCmd); err != nil {
 		m.addLine(fmt.Sprintf("%sClipboard unavailable: %v%s", colorYellow, err, colorReset))
 		m.addLine(fmt.Sprintf("%sLast command: %s%s%s", colorGray, colorCyan, lastCmd, colorReset))
 		return

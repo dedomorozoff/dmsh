@@ -183,6 +183,7 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newHistoryCmd())
 	cmd.AddCommand(newAuditCmd())
 	addModelCommand(cmd, rf)
+	registerCommonFlagCompletions(cmd)
 
 	return cmd
 }

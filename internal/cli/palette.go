@@ -35,6 +35,8 @@ var paletteItems = []paletteItem{
 	{name: "/mouse", label: "mouse: toggle UI clicks / text selection", desc: "turn mouse off to select and copy text, on to restore UI clicks"},
 	{name: "/todo", label: "todo: the model's task list", desc: "open the list; click or Enter a task to toggle it done"},
 	{name: "/stats", desc: "session statistics"},
+	{name: "/search", label: "search: find in the output", desc: "highlight matches; F3 / Shift+F3 moves between them"},
+	{name: "/copy", label: "copy: last block of output", desc: "copy the last output block, or /copy N for the last N lines"},
 	{name: "/history", desc: "recent commands"},
 	{name: "/retry", desc: "retry the last request"},
 	{name: "/alias", desc: "list or create aliases"},

@@ -653,7 +653,7 @@ func handleExport(line string, out io.Writer, s *session) {
 		return
 	}
 
-	if err := copyToClipboard(lastCmd); err != nil {
+	if err := clipboardWrite(lastCmd); err != nil {
 		fmt.Fprintf(out, "%sClipboard unavailable: %v%s\n", yellow, err, reset)
 		fmt.Fprintf(out, "%sLast command: %s%s%s\n", gray, cyan, lastCmd, reset)
 		return
