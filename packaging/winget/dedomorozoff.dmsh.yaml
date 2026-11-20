@@ -1,0 +1,16 @@
+# Template winget manifest (single-file form for reference).
+# For submission, split into version/defaultLocale/installer manifests per winget guidelines.
+PackageIdentifier: dedomorozoff.dmsh
+PackageVersion: 0.0.0
+PackageLocale: en-US
+Publisher: dedomorozoff
+PackageName: dmsh
+ShortDescription: Direct Model Shell - natural language shell assistant
+License: MIT
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/dedomorozoff/dmsh/releases/download/v0.0.0/dmsh-0.0.0-windows-amd64.zip
+    InstallerSha256: REPLACE_WITH_SHA256
+ManifestType: singleton
+ManifestVersion: 1.6.0

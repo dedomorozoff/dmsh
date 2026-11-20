@@ -1,0 +1,23 @@
+{
+  "version": "0.0.0",
+  "description": "Direct Model Shell - natural language shell assistant",
+  "homepage": "https://github.com/dedomorozoff/dmsh",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/dedomorozoff/dmsh/releases/download/v0.0.0/dmsh-0.0.0-windows-amd64.zip",
+      "hash": "REPLACE_WITH_SHA256"
+    }
+  },
+  "bin": "dmsh.exe",
+  "checkver": {
+    "github": "https://github.com/dedomorozoff/dmsh"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/dedomorozoff/dmsh/releases/download/v$version/dmsh-$version-windows-amd64.zip"
+      }
+    }
+  }
+}
