@@ -37,11 +37,20 @@ type AuditEntry struct {
 
 // SessionStats — статистика текущей сессии.
 type SessionStats struct {
-	StartTime      time.Time
-	Requests       int
-	CommandsLLM    int
-	CommandsDirect int
-	ErrorsFix      int
+	StartTime       time.Time
+	Requests        int
+	CommandsLLM     int
+	CommandsDirect  int
+	ErrorsFix       int
+	ToolSteps       int
+	RequestErrors   int
+	StreamChunks    int
+	StreamChars     int
+	TotalStreamTime time.Duration
+	TotalTTFT       time.Duration
+	TTFTSamples     int
+	LastRequestDur  time.Duration
+	LastTTFT        time.Duration
 }
 
 // session инкапсулирует движок и собранный для него контекст промпта.
@@ -81,6 +90,40 @@ func (s *session) recordRequest(input string) {
 	defer s.mu.Unlock()
 	s.stats.Requests++
 	s.lastInput = input
+}
+
+func (s *session) recordRequestMetrics(pr *streamPrinter, dur time.Duration, err error) {
+	var chunks, chars int
+	var streamDur, ttft time.Duration
+	if pr != nil {
+		chunks, chars, streamDur, ttft = pr.metrics()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats.LastRequestDur = dur
+	s.stats.LastTTFT = ttft
+	s.stats.StreamChunks += chunks
+	s.stats.StreamChars += chars
+	s.stats.TotalStreamTime += streamDur
+	if ttft > 0 {
+		s.stats.TotalTTFT += ttft
+		s.stats.TTFTSamples++
+	}
+	if err != nil {
+		s.stats.RequestErrors++
+	}
+}
+
+func (s *session) recordToolStep() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats.ToolSteps++
+}
+
+func (s *session) statsSnapshot() SessionStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stats
 }
 
 // lastRequest возвращает последний запрос пользователя (/retry, уточнения).

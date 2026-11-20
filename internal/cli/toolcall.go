@@ -63,6 +63,7 @@ func (s *session) chatWithTools(
 
 		msgs = append(msgs, msg)
 		for _, call := range msg.ToolCalls {
+			s.recordToolStep()
 			fmt.Fprintf(out, "\n%s[tool]%s %s%s%s\n", cyan, reset, cyan, call.Name, reset)
 			result := s.runToolCall(ctx, call, out)
 			// Список todo — состояние пользователя: без этой строки он видит

@@ -253,14 +253,28 @@ func (m *tuiModel) showHistory() {
 }
 
 func (m *tuiModel) showStats() {
-	elapsed := time.Since(m.s.stats.StartTime).Round(time.Second)
-	total := m.s.stats.CommandsLLM + m.s.stats.CommandsDirect
+	st := m.s.statsSnapshot()
+	elapsed := time.Since(st.StartTime).Round(time.Second)
+	total := st.CommandsLLM + st.CommandsDirect
 	m.addLine(fmt.Sprintf("\n%s=== Session Stats ===%s", colorBold+colorCyan, colorReset))
-	m.addLine(fmt.Sprintf("  %sStarted:%s       %s ago", colorBold, colorReset, elapsed))
-	m.addLine(fmt.Sprintf("  %sRequests:%s      %d", colorBold, colorReset, m.s.stats.Requests))
-	m.addLine(fmt.Sprintf("  %sCommands run:%s  %d (LLM: %d, direct: %d)", colorBold, colorReset, total, m.s.stats.CommandsLLM, m.s.stats.CommandsDirect))
-	m.addLine(fmt.Sprintf("  %sErrors fixed:%s  %d", colorBold, colorReset, m.s.stats.ErrorsFix))
-	m.addLine(fmt.Sprintf("  %sCurrent mode:%s  %s\n", colorBold, colorReset, modeLabel(m.rf.cfg.Mode)))
+	m.addLine(fmt.Sprintf("  %sStarted:%s        %s ago", colorBold, colorReset, elapsed))
+	m.addLine(fmt.Sprintf("  %sRequests:%s       %d (errors: %d)", colorBold, colorReset, st.Requests, st.RequestErrors))
+	m.addLine(fmt.Sprintf("  %sCommands run:%s   %d (LLM: %d, direct: %d)", colorBold, colorReset, total, st.CommandsLLM, st.CommandsDirect))
+	m.addLine(fmt.Sprintf("  %sTool steps:%s     %d", colorBold, colorReset, st.ToolSteps))
+	m.addLine(fmt.Sprintf("  %sErrors fixed:%s   %d", colorBold, colorReset, st.ErrorsFix))
+	if st.TTFTSamples > 0 {
+		avgTTFT := st.TotalTTFT / time.Duration(st.TTFTSamples)
+		m.addLine(fmt.Sprintf("  %sTTFT:%s           avg %s (last %s)", colorBold, colorReset, avgTTFT.Round(time.Millisecond), st.LastTTFT.Round(time.Millisecond)))
+	} else if st.LastTTFT > 0 {
+		m.addLine(fmt.Sprintf("  %sTTFT:%s           last %s", colorBold, colorReset, st.LastTTFT.Round(time.Millisecond)))
+	}
+	if st.LastRequestDur > 0 {
+		m.addLine(fmt.Sprintf("  %sLast request:%s   %s", colorBold, colorReset, st.LastRequestDur.Round(time.Millisecond)))
+	}
+	if st.TotalStreamTime > 0 || st.StreamChars > 0 {
+		m.addLine(fmt.Sprintf("  %sStream:%s         %d chunks, %d chars, %s total", colorBold, colorReset, st.StreamChunks, st.StreamChars, st.TotalStreamTime.Round(time.Millisecond)))
+	}
+	m.addLine(fmt.Sprintf("  %sCurrent mode:%s   %s\n", colorBold, colorReset, modeLabel(m.rf.cfg.Mode)))
 }
 
 // showModel печатает экран /model теми же строками, что и REPL: общий

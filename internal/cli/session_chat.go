@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
@@ -13,6 +14,7 @@ import (
 
 // askStream отправляет запрос модели и стримит вывод полей на экран в реальном времени.
 func (s *session) askStream(ctx context.Context, mode, userInput string, out io.Writer) (prompt.Response, string, error) {
+	start := time.Now()
 	s.recordRequest(userInput)
 	cwd, _ := os.Getwd()
 	pctx := prompt.Context{
@@ -48,6 +50,7 @@ func (s *session) askStream(ctx context.Context, mode, userInput string, out io.
 	}
 
 	fmt.Fprintln(out)
+	s.recordRequestMetrics(pr, time.Since(start), err)
 
 	if err != nil {
 		return prompt.Response{}, pr.String(), err
@@ -118,11 +121,15 @@ func (s *session) finishAnswer(ctx context.Context, system, user string, opts ll
 // streamPrinter копит поток ответа модели и печатает значения полей JSON
 // по мере их появления, не дожидаясь закрывающей скобки.
 type streamPrinter struct {
-	out     io.Writer
-	raw     strings.Builder
-	printed map[string]int
-	headers map[string]bool
-	keys    []string
+	out          io.Writer
+	raw          strings.Builder
+	printed      map[string]int
+	headers      map[string]bool
+	keys         []string
+	startAt      time.Time
+	firstTokenAt time.Time
+	chunks       int
+	chars        int
 }
 
 func newStreamPrinter(out io.Writer) *streamPrinter {
@@ -133,11 +140,19 @@ func newStreamPrinter(out io.Writer) *streamPrinter {
 		// Question is deliberately not printed here: a clarification is
 		// shown by the interactive question flow (TUI / REPL), printing it
 		// again would duplicate the text.
-		keys: []string{"command", "explanation"},
+		keys:    []string{"command", "explanation"},
+		startAt: time.Now(),
 	}
 }
 
 func (p *streamPrinter) feed(tok string) {
+	if tok != "" {
+		if p.firstTokenAt.IsZero() {
+			p.firstTokenAt = time.Now()
+		}
+		p.chunks++
+		p.chars += len(tok)
+	}
 	p.raw.WriteString(tok)
 	buf := p.raw.String()
 
@@ -172,11 +187,21 @@ func (p *streamPrinter) feed(tok string) {
 
 func (p *streamPrinter) String() string { return p.raw.String() }
 
-// empty сообщает, что ни одно поле не было напечатано — по этому признаку
-// решается, печатать ли отремонтированный ответ целиком.
 func (p *streamPrinter) empty() bool {
 	return p.printed["command"] == 0 && p.printed["explanation"] == 0
 }
+
+func (p *streamPrinter) metrics() (chunks, chars int, streamDur, ttft time.Duration) {
+	chunks, chars = p.chunks, p.chars
+	if !p.startAt.IsZero() {
+		streamDur = time.Since(p.startAt)
+	}
+	if !p.firstTokenAt.IsZero() && !p.startAt.IsZero() {
+		ttft = p.firstTokenAt.Sub(p.startAt)
+	}
+	return
+}
+
 
 func getJSONValue(buf, key string) (value string, hasClosed bool, startIdx int) {
 	keyIdx := strings.Index(buf, `"`+key+`"`)

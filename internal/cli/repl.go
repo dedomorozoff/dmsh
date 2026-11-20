@@ -391,14 +391,28 @@ func handleTodo(arg string, out io.Writer, s *session) {
 }
 
 func showStats(out io.Writer, s *session) {
-	elapsed := time.Since(s.stats.StartTime).Round(time.Second)
-	total := s.stats.CommandsLLM + s.stats.CommandsDirect
+	st := s.statsSnapshot()
+	elapsed := time.Since(st.StartTime).Round(time.Second)
+	total := st.CommandsLLM + st.CommandsDirect
 	fmt.Fprintf(out, "\n%s%s=== Session Stats ===%s\n", bold, cyan, reset)
-	fmt.Fprintf(out, "  %sStarted:%s       %s ago\n", bold, reset, elapsed)
-	fmt.Fprintf(out, "  %sRequests:%s      %d\n", bold, reset, s.stats.Requests)
-	fmt.Fprintf(out, "  %sCommands run:%s  %d (LLM: %d, direct: %d)\n", bold, reset, total, s.stats.CommandsLLM, s.stats.CommandsDirect)
-	fmt.Fprintf(out, "  %sErrors fixed:%s  %d\n", bold, reset, s.stats.ErrorsFix)
-	fmt.Fprintf(out, "  %sCurrent mode:%s  %s\n\n", bold, reset, s.cfg.Mode)
+	fmt.Fprintf(out, "  %sStarted:%s        %s ago\n", bold, reset, elapsed)
+	fmt.Fprintf(out, "  %sRequests:%s       %d (errors: %d)\n", bold, reset, st.Requests, st.RequestErrors)
+	fmt.Fprintf(out, "  %sCommands run:%s   %d (LLM: %d, direct: %d)\n", bold, reset, total, st.CommandsLLM, st.CommandsDirect)
+	fmt.Fprintf(out, "  %sTool steps:%s     %d\n", bold, reset, st.ToolSteps)
+	fmt.Fprintf(out, "  %sErrors fixed:%s   %d\n", bold, reset, st.ErrorsFix)
+	if st.TTFTSamples > 0 {
+		avgTTFT := st.TotalTTFT / time.Duration(st.TTFTSamples)
+		fmt.Fprintf(out, "  %sTTFT:%s           avg %s (last %s)\n", bold, reset, avgTTFT.Round(time.Millisecond), st.LastTTFT.Round(time.Millisecond))
+	} else if st.LastTTFT > 0 {
+		fmt.Fprintf(out, "  %sTTFT:%s           last %s\n", bold, reset, st.LastTTFT.Round(time.Millisecond))
+	}
+	if st.LastRequestDur > 0 {
+		fmt.Fprintf(out, "  %sLast request:%s   %s\n", bold, reset, st.LastRequestDur.Round(time.Millisecond))
+	}
+	if st.TotalStreamTime > 0 || st.StreamChars > 0 {
+		fmt.Fprintf(out, "  %sStream:%s         %d chunks, %d chars, %s total\n", bold, reset, st.StreamChunks, st.StreamChars, st.TotalStreamTime.Round(time.Millisecond))
+	}
+	fmt.Fprintf(out, "  %sCurrent mode:%s   %s\n\n", bold, reset, s.cfg.Mode)
 }
 
 // showModel печатает экран /model теми же строками, что и TUI: общий
