@@ -85,9 +85,13 @@ func (p Provider) Valid() bool {
 // endpoint бессмысленно.
 func (p Provider) Remote() bool { return p != "" && p != ProviderLocal }
 
+// CurrentConfigVersion - текущая версия схемы config.json.
+const CurrentConfigVersion = 1
+
 // Config описывает рантайм-настройки dmsh. Поля сознательно плоские,
 // чтобы их легко было пробрасывать из флагов CLI и из JSON-файла.
 type Config struct {
+	ConfigVersion int      `json:"config_version,omitempty"`
 	ModelPath     string   `json:"model_path"`
 	DefaultModel  string   `json:"default_model"`
 	Provider      Provider `json:"provider"`
@@ -244,7 +248,8 @@ func Default() Config {
 	}
 
 	return Config{
-		Provider: ProviderAuto,
+		ConfigVersion: CurrentConfigVersion,
+		Provider:      ProviderAuto,
 		// RemoteModel намеренно пуст: дефолт зависит от провайдера
 		// (DefaultModelFor), и зашивать его сюда значило бы тащить Pollinations
 		// в Ollama. Validate подставляет нужный.
@@ -388,6 +393,9 @@ func ValidateRemoteBaseURL(raw string) error {
 
 // Save сохраняет конфигурацию в ~/.config/dmsh/config.json
 func Save(cfg Config) error {
+	if cfg.ConfigVersion < CurrentConfigVersion {
+		cfg.ConfigVersion = CurrentConfigVersion
+	}
 	path, err := userConfigPath()
 	if err != nil {
 		return fmt.Errorf("config path: %w", err)

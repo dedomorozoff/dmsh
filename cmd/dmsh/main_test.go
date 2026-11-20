@@ -45,11 +45,11 @@ func TestIsUsageError(t *testing.T) {
 		"accepts 1 arg(s), received 2",
 		"interactive mode is not supported with --json; provide a query",
 	} {
-		if !isUsageError(errors.New(msg)) {
-			t.Errorf("isUsageError(%q)=false, want true", msg)
+		if !cli.IsUsageError(errors.New(msg)) {
+			t.Errorf("IsUsageError(%q)=false, want true", msg)
 		}
 	}
-	if isUsageError(errors.New("connection refused")) {
+	if cli.IsUsageError(errors.New("connection refused")) {
 		t.Error("connection refused should not be usage error")
 	}
 }
@@ -63,11 +63,11 @@ func TestIsConfigError(t *testing.T) {
 		"temperature 3.00 out of range [0, 2]",
 		"failed to save config: disk full",
 	} {
-		if !isConfigError(errors.New(msg)) {
-			t.Errorf("isConfigError(%q)=false, want true", msg)
+		if !cli.IsConfigError(errors.New(msg)) {
+			t.Errorf("IsConfigError(%q)=false, want true", msg)
 		}
 	}
-	if isConfigError(errors.New("unknown flag: --x")) {
+	if cli.IsConfigError(errors.New("unknown flag: --x")) {
 		t.Error("flag error should not be config error")
 	}
 }
@@ -83,11 +83,11 @@ func TestIsProviderError(t *testing.T) {
 		errors.New("context deadline exceeded"),
 	}
 	for _, err := range cases {
-		if !isProviderError(err) {
-			t.Errorf("isProviderError(%q)=false, want true", err)
+		if !cli.IsProviderError(err) {
+			t.Errorf("IsProviderError(%q)=false, want true", err)
 		}
 	}
-	if isProviderError(errors.New("parse config: bad")) {
+	if cli.IsProviderError(errors.New("parse config: bad")) {
 		t.Error("config parse should not be provider error")
 	}
 }
@@ -99,34 +99,34 @@ func TestExitCode(t *testing.T) {
 		want int
 	}{
 		{"nil", nil, 0},
-		{"usage", errors.New("requires at least 1 arg(s), only received 0"), exitUsage},
-		{"config", errors.New("parse config x: bad"), exitConfig},
-		{"provider sentinel", llm.ErrNoLocalModel, exitProvider},
-		{"provider network", errors.New("dial tcp: connection refused"), exitProvider},
+		{"usage", errors.New("requires at least 1 arg(s), only received 0"), 2},
+		{"config", errors.New("parse config x: bad"), 3},
+		{"provider sentinel", llm.ErrNoLocalModel, 4},
+		{"provider network", errors.New("dial tcp: connection refused"), 4},
 		{"exit coder", exitErr{code: 7}, 7},
-		{"exit coder zero", exitErr{code: 0}, exitGeneral},
-		{"general", errors.New("something else"), exitGeneral},
+		{"exit coder zero", exitErr{code: 0}, 1},
+		{"general", errors.New("something else"), 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := exitCode(tt.err); got != tt.want {
-				t.Fatalf("exitCode(%v)=%d, want %d", tt.err, got, tt.want)
+			if got := cli.ErrorExitCode(tt.err); got != tt.want {
+				t.Fatalf("ErrorExitCode(%v)=%d, want %d", tt.err, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestErrorHint(t *testing.T) {
-	if !strings.Contains(errorHint(llm.ErrNoLocalModel), "dmsh model download") {
+	if !strings.Contains(cli.ErrorHint(llm.ErrNoLocalModel), "dmsh model download") {
 		t.Error("missing model download hint for ErrNoLocalModel")
 	}
-	if !strings.Contains(errorHint(errors.New("requires at least 1 arg(s)")), "--help") {
+	if !strings.Contains(cli.ErrorHint(errors.New("requires at least 1 arg(s)")), "--help") {
 		t.Error("missing --help hint for usage error")
 	}
-	if !strings.Contains(errorHint(errors.New("parse config: bad")), "config show") {
+	if !strings.Contains(cli.ErrorHint(errors.New("parse config: bad")), "config show") {
 		t.Error("missing config hint")
 	}
-	if !strings.Contains(errorHint(errors.New("dial tcp: connection refused")), "doctor") {
+	if !strings.Contains(cli.ErrorHint(errors.New("dial tcp: connection refused")), "doctor") {
 		t.Error("missing doctor hint for provider/network error")
 	}
 }
@@ -148,8 +148,8 @@ func TestErrorKind(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := errorKind(tt.err); got != tt.want {
-				t.Fatalf("errorKind(%v)=%q, want %q", tt.err, got, tt.want)
+			if got := cli.ErrorKind(tt.err); got != tt.want {
+				t.Fatalf("ErrorKind(%v)=%q, want %q", tt.err, got, tt.want)
 			}
 		})
 	}
@@ -184,8 +184,8 @@ func TestRunInteractiveJSONRejected(t *testing.T) {
 	isolateEnv(t)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"--json"}, &out, &errBuf)
-	if code != exitUsage {
-		t.Fatalf("exit=%d, want %d (out=%s err=%s)", code, exitUsage, out.String(), errBuf.String())
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2 (out=%s err=%s)", code, out.String(), errBuf.String())
 	}
 	var m map[string]any
 	if err := json.Unmarshal(out.Bytes(), &m); err != nil {
@@ -209,8 +209,8 @@ func TestRunBadFlagJSON(t *testing.T) {
 	isolateEnv(t)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"--badflag", "--json"}, &out, &errBuf)
-	if code != exitUsage {
-		t.Fatalf("exit=%d, want %d (out=%s err=%s)", code, exitUsage, out.String(), errBuf.String())
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2 (out=%s err=%s)", code, out.String(), errBuf.String())
 	}
 	var m map[string]any
 	if err := json.Unmarshal(out.Bytes(), &m); err != nil {
@@ -223,3 +223,4 @@ func TestRunBadFlagJSON(t *testing.T) {
 		t.Fatalf("kind=%q, want usage: %#v", kind, m)
 	}
 }
+

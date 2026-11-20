@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -274,5 +276,86 @@ func TestProxyRoundTrip(t *testing.T) {
 	}
 	if got := cfg.Proxy(); got != want {
 		t.Fatalf("Proxy() = %+v, want %+v", got, want)
+	}
+}
+
+func TestDefaultHasConfigVersion(t *testing.T) {
+	if got := Default().ConfigVersion; got != CurrentConfigVersion {
+		t.Fatalf("Default().ConfigVersion = %d, want %d", got, CurrentConfigVersion)
+	}
+}
+
+func TestLoadMigratesLegacyConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("AppData", dir)
+
+	path, err := userConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "proxy_url": "socks5://user:pass@127.0.0.1:1080",
+  "mode": "",
+  "provider": ""
+}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ConfigVersion != CurrentConfigVersion {
+		t.Fatalf("ConfigVersion = %d, want %d", cfg.ConfigVersion, CurrentConfigVersion)
+	}
+	p := cfg.Proxy()
+	if p.Proto != netproxy.ProtoSOCKS5 || p.Host != "127.0.0.1" || p.Port != 1080 {
+		t.Fatalf("migrated proxy = %+v", p)
+	}
+	if p.User != "user" || p.Password != "pass" {
+		t.Fatalf("migrated credentials = %q/%q", p.User, p.Password)
+	}
+	if cfg.ProxyURL != "" {
+		t.Fatal("legacy proxy_url should be cleared after migration")
+	}
+	if cfg.Mode != ModeAI || cfg.Provider != ProviderAuto {
+		t.Fatalf("mode/provider = %q/%q, want defaults", cfg.Mode, cfg.Provider)
+	}
+}
+
+func TestSaveWritesConfigVersion(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("AppData", dir)
+
+	cfg := Default()
+	cfg.ConfigVersion = 0
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path, err := userConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"config_version"`) {
+		t.Fatalf("saved config missing config_version:\n%s", data)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.ConfigVersion != CurrentConfigVersion {
+		t.Fatalf("loaded ConfigVersion = %d, want %d", loaded.ConfigVersion, CurrentConfigVersion)
 	}
 }
