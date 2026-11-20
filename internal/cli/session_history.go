@@ -159,22 +159,52 @@ func (s *session) addTurn(user, assistant string) {
 }
 
 // sessionFile возвращает путь к файлу персиста multi-turn контекста.
+// sessionFile возвращает путь к файлу истории multi-turn контекста.
 func sessionFile() string {
+	return sessionFileNamed("")
+}
+
+func sessionFileNamed(name string) string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "dmsh", "session.json")
+	name = sanitizeSessionName(name)
+	if name == "" {
+		return filepath.Join(dir, "dmsh", "session.json")
+	}
+	return filepath.Join(dir, "dmsh", "sessions", name+".json")
+}
+
+func sanitizeSessionName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteRune('_')
+		}
+	}
+	out := strings.Trim(b.String(), ".")
+	if out == "" {
+		return ""
+	}
+	return out
 }
 
 // loadTurns восстанавливает multi-turn контекст из файла, если включён
-// ResumeSession. Ошибки чтения/парсинга молча игнорируются — это лишь
-// подсказка для модели, а не обязательные данные.
+// ResumeSession. Ошибки чтения/парсинга там игнорируются - это не
+// обязательный файл.
 func (s *session) loadTurns() {
 	if !s.cfg.ResumeSession {
 		return
 	}
-	path := sessionFile()
+	path := sessionFileNamed(s.sessionName)
 	if path == "" {
 		return
 	}
@@ -192,12 +222,12 @@ func (s *session) loadTurns() {
 	s.turns = turns
 }
 
-// saveTurns персистит multi-turn контекст при завершении сессии.
+// saveTurns сохраняет multi-turn контекст по завершении сессии.
 func (s *session) saveTurns() {
 	if !s.cfg.ResumeSession {
 		return
 	}
-	path := sessionFile()
+	path := sessionFileNamed(s.sessionName)
 	if path == "" {
 		return
 	}
@@ -209,4 +239,3 @@ func (s *session) saveTurns() {
 		return
 	}
 }
-

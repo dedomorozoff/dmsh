@@ -14,13 +14,14 @@ import (
 
 // rootFlags holds common flags shared across subcommands.
 type rootFlags struct {
-	cfg       config.Config
-	preview   bool
-	autoYes   bool
-	noTools   bool
-	jsonOut   bool
-	debug     bool
-	debugFile string
+	cfg         config.Config
+	preview     bool
+	autoYes     bool
+	noTools     bool
+	jsonOut     bool
+	debug       bool
+	debugFile   string
+	sessionName string
 }
 
 // providerValue — pflag.Value для провайдера инференса: принимает только
@@ -178,6 +179,7 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&rf.jsonOut, "json", false, "print the result as JSON to stdout (no banners/colors; diagnostics to stderr)")
 	pf.BoolVar(&rf.debug, "debug", false, "write debug log with timings, provider and retry details")
 	pf.StringVar(&rf.debugFile, "debug-file", "dmsh-debug.log", "path to debug log file (used with --debug)")
+	pf.StringVar(&rf.sessionName, "session", "", "named session for persisted turns (use with resume_session)")
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))
@@ -186,6 +188,7 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(newHistoryCmd())
 	cmd.AddCommand(newAuditCmd())
+	cmd.AddCommand(newSessionCmd())
 	addModelCommand(cmd, rf)
 	registerCommonFlagCompletions(cmd)
 

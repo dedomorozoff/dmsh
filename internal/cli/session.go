@@ -82,6 +82,7 @@ type session struct {
 	stdinCtx     string        // данные из stdin pipe
 	autoYes      bool          // --yes: пропускать все подтверждения
 	debug        *debugLogger
+	sessionName  string
 }
 
 // recordRequest запоминает запрос пользователя и увеличивает счётчик.
@@ -145,6 +146,15 @@ func (s *session) debugf(format string, args ...any) {
 		return
 	}
 	s.debug.printf(format, args...)
+}
+
+func (s *session) setSessionName(name string) {
+	s.sessionName = sanitizeSessionName(name)
+	s.turns = nil
+	s.loadTurns()
+	if s.sessionName != "" {
+		s.debugf("session name=%s turns=%d", s.sessionName, len(s.turns))
+	}
 }
 
 // lastRequest возвращает последний запрос пользователя (/retry, уточнения).
