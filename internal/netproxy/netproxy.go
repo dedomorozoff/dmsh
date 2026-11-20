@@ -183,7 +183,7 @@ func (s *Settings) ApplyURL(raw string) error {
 	}
 	u, err := url.Parse(body)
 	if err != nil {
-		return fmt.Errorf("invalid proxy address %q: %w", raw, err)
+		return fmt.Errorf("invalid proxy address %q: %w", Redact(raw), err)
 	}
 	proto := strings.ToLower(u.Scheme)
 	if !ValidProto(proto) {
@@ -248,7 +248,7 @@ func (s Settings) ProxyURL() (*url.URL, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid proxy address %q: %w", raw, err)
+		return nil, fmt.Errorf("invalid proxy address %q: %w", Redact(raw), err)
 	}
 	switch strings.ToLower(u.Scheme) {
 	case ProtoHTTP, ProtoHTTPS, ProtoSOCKS5, ProtoSOCKS5H:

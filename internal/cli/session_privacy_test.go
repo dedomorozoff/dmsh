@@ -124,3 +124,41 @@ func assertPrivatePerm(t *testing.T, path string) {
 		t.Fatalf("%s perm = %o, want 600", path, perm)
 	}
 }
+
+func TestAuditRedactsSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	s := &session{cfg: config.Config{AuditFile: path, RemoteAPIKey: "sk-supersecret"}}
+	s.audit(`curl -H "Authorization: Bearer sk-supersecret" https://user:pass@example.com`, "model", policy.Decision{Allowed: true, Risk: prompt.RiskLow}, executor.Result{})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "sk-supersecret") || strings.Contains(text, "user:pass@") {
+		t.Fatalf("audit leaked secret:\n%s", text)
+	}
+	var entry AuditEntry
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &entry); err != nil {
+		t.Fatalf("unmarshal audit entry: %v", err)
+	}
+	if !strings.Contains(entry.Command, "[REDACTED]") {
+		t.Fatalf("expected redacted command, got: %q", entry.Command)
+	}
+}
+
+func TestHistoryRedactsSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	s := &session{cfg: config.Config{HistoryFile: path, RemoteAPIKey: "sk-supersecret"}}
+	s.addHistory("export POLLINATIONS_API_KEY=sk-supersecret", "direct")
+	if err := s.saveHistory(); err != nil {
+		t.Fatalf("saveHistory: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "sk-supersecret") {
+		t.Fatalf("history leaked secret:\n%s", data)
+	}
+}

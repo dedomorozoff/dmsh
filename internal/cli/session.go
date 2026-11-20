@@ -20,6 +20,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/netproxy"
 	"github.com/dedomorozoff/dmsh/internal/policy"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/redact"
 	"github.com/dedomorozoff/dmsh/internal/tools"
 )
 
@@ -554,10 +555,17 @@ func trimHistoryFile(path string, maxLines int) error {
 }
 
 // addHistory добавляет команду в историю сессии.
+func (s *session) redactSecrets(text string) string {
+	if s == nil {
+		return redact.Text(text)
+	}
+	return redact.Text(text, s.cfg.APIKey(), s.cfg.RemoteAPIKey, s.cfg.ProxyPassword)
+}
+
 func (s *session) addHistory(cmd, source string) {
 	s.hist = append(s.hist, HistoryEntry{
 		Timestamp: time.Now(),
-		Command:   cmd,
+		Command:   s.redactSecrets(cmd),
 		Source:    source,
 	})
 }
@@ -570,11 +578,11 @@ func (s *session) audit(cmd, source string, dec policy.Decision, res executor.Re
 	}
 	entry := AuditEntry{
 		Timestamp: time.Now(),
-		Command:   cmd,
+		Command:   s.redactSecrets(cmd),
 		Source:    source,
 		Risk:      dec.Risk,
 		Allowed:   dec.Allowed,
-		Reason:    dec.Reason,
+		Reason:    s.redactSecrets(dec.Reason),
 		ExitCode:  res.ExitCode,
 		Success:   res.Err == nil && res.ExitCode == 0,
 	}

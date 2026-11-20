@@ -15,6 +15,7 @@ import (
 
 	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/dedomorozoff/dmsh/internal/model"
+	"github.com/dedomorozoff/dmsh/internal/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +32,7 @@ type doctorCheck struct {
 	Status  doctorStatus `json:"status"`
 	Message string       `json:"message"`
 	Detail  string       `json:"detail,omitempty"`
+	Hint    string       `json:"hint,omitempty"`
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -76,16 +78,27 @@ func runDoctor(ctx context.Context) []doctorCheck {
 	checks = append(checks, doctorProxyCheck(cfg))
 	checks = append(checks, doctorNetworkCheck(ctx, cfg)...)
 	checks = append(checks, doctorEnvCheck())
+	redactDoctorChecks(checks, cfg)
 	return checks
+}
+
+func redactDoctorChecks(checks []doctorCheck, cfg config.Config) {
+	secrets := []string{cfg.APIKey(), cfg.RemoteAPIKey, cfg.ProxyPassword}
+	for i := range checks {
+		checks[i].Message = redact.Text(checks[i].Message, secrets...)
+		checks[i].Detail = redact.Text(checks[i].Detail, secrets...)
+		checks[i].Hint = redact.Text(checks[i].Hint, secrets...)
+		checks[i].Detail = redact.URL(checks[i].Detail)
+	}
 }
 
 func doctorConfigCheck(cfg config.Config, cfgErr error) doctorCheck {
 	path, err := configPath()
 	if err != nil {
-		return doctorCheck{Name: "config", Status: doctorWarn, Message: "cannot determine config path", Detail: err.Error()}
+		return doctorCheck{Name: "config", Status: doctorWarn, Message: "cannot determine config path", Detail: err.Error(), Hint: "check HOME/XDG_CONFIG_HOME/AppData environment"}
 	}
 	if cfgErr != nil {
-		return doctorCheck{Name: "config", Status: doctorFail, Message: "config is invalid", Detail: cfgErr.Error() + " (" + path + ")"}
+		return doctorCheck{Name: "config", Status: doctorFail, Message: "config is invalid", Detail: cfgErr.Error() + " (" + path + ")", Hint: "fix the config file or run `dmsh config show`"}
 	}
 	if _, err := os.Stat(path); errorsIsNotExist(err) {
 		return doctorCheck{Name: "config", Status: doctorOK, Message: "using defaults (no config file)", Detail: path}
@@ -119,7 +132,7 @@ func doctorFilePermChecks(cfg config.Config) []doctorCheck {
 		// Чувствительные файлы должны быть закрыты для других пользователей.
 		if runtime.GOOS != "windows" {
 			if perm := info.Mode().Perm(); perm&0o077 != 0 {
-				out = append(out, doctorCheck{Name: p.name, Status: doctorWarn, Message: "file permissions are too open", Detail: fmt.Sprintf("%s (%04o, want 0600)", p.path, perm)})
+				out = append(out, doctorCheck{Name: p.name, Status: doctorWarn, Message: "file permissions are too open", Detail: fmt.Sprintf("%s (%04o, want 0600)", p.path, perm), Hint: "restrict permissions to 0600"})
 				continue
 			}
 		}
@@ -129,7 +142,7 @@ func doctorFilePermChecks(cfg config.Config) []doctorCheck {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			if runtime.GOOS != "windows" {
 				if perm := info.Mode().Perm(); perm&0o077 != 0 {
-					out = append(out, doctorCheck{Name: "config dir", Status: doctorWarn, Message: "directory permissions are too open", Detail: fmt.Sprintf("%s (%04o, want 0700)", dir, perm)})
+					out = append(out, doctorCheck{Name: "config dir", Status: doctorWarn, Message: "directory permissions are too open", Detail: fmt.Sprintf("%s (%04o, want 0700)", dir, perm), Hint: "restrict permissions to 0700"})
 				} else {
 					out = append(out, doctorCheck{Name: "config dir", Status: doctorOK, Message: "permissions look good", Detail: dir})
 				}
@@ -157,13 +170,13 @@ func doctorProviderCheck(cfg config.Config) []doctorCheck {
 			if cfg.Provider == config.ProviderAuto {
 				msg = "POLLINATIONS_API_KEY is not set (auto may fall back to local model if available)"
 			}
-			out = append(out, doctorCheck{Name: "api key", Status: status, Message: msg, Detail: "set POLLINATIONS_API_KEY or remote_api_key in config"})
+			out = append(out, doctorCheck{Name: "api key", Status: status, Message: msg, Detail: "set POLLINATIONS_API_KEY or remote_api_key in config", Hint: "configure POLLINATIONS_API_KEY or remote_api_key"})
 		} else {
 			out = append(out, doctorCheck{Name: "api key", Status: doctorOK, Message: "API key configured", Detail: cfg.APIKeySource()})
 		}
 	case config.ProviderLocal:
 		if strings.TrimSpace(cfg.ModelPath) == "" {
-			out = append(out, doctorCheck{Name: "local model", Status: doctorWarn, Message: "model_path is not set", Detail: "set --model or download a GGUF into the models directory"})
+			out = append(out, doctorCheck{Name: "local model", Status: doctorWarn, Message: "model_path is not set", Detail: "set --model or download a GGUF into the models directory", Hint: "run `dmsh model download` or set provider/model in /setup"})
 		}
 	}
 	return out
@@ -178,14 +191,14 @@ func doctorModelCheck(cfg config.Config) doctorCheck {
 	if strings.TrimSpace(cfg.ModelPath) != "" {
 		info, err := os.Stat(cfg.ModelPath)
 		if err != nil {
-			return doctorCheck{Name: "model", Status: doctorWarn, Message: "configured model_path is not accessible", Detail: cfg.ModelPath + ": " + err.Error()}
+			return doctorCheck{Name: "model", Status: doctorWarn, Message: "configured model_path is not accessible", Detail: cfg.ModelPath + ": " + err.Error(), Hint: "check model_path in config or download a model"}
 		}
 		if info.IsDir() {
-			return doctorCheck{Name: "model", Status: doctorWarn, Message: "model_path points to a directory", Detail: cfg.ModelPath}
+			return doctorCheck{Name: "model", Status: doctorWarn, Message: "model_path points to a directory", Detail: cfg.ModelPath, Hint: "set model_path to a .gguf file"}
 		}
 		detail := fmt.Sprintf("%s (%d MB)", cfg.ModelPath, info.Size()/1024/1024)
 		if checked, verr := model.VerifySHA256Sidecar(cfg.ModelPath); verr != nil {
-			return doctorCheck{Name: "model", Status: doctorFail, Message: "model checksum verification failed", Detail: detail + ": " + verr.Error()}
+			return doctorCheck{Name: "model", Status: doctorFail, Message: "model checksum verification failed", Detail: detail + ": " + verr.Error(), Hint: "re-download or verify the model file and .sha256 sidecar"}
 		} else if checked {
 			detail += ", sha256 verified"
 		} else {
@@ -198,16 +211,17 @@ func doctorModelCheck(cfg config.Config) doctorCheck {
 		return doctorCheck{Name: "model", Status: doctorWarn, Message: "cannot list local models", Detail: err.Error()}
 	}
 	if len(models) == 0 {
-		check := doctorCheck{Name: "model", Status: doctorWarn, Message: "no local GGUF models found", Detail: modelDir}
+		check := doctorCheck{Name: "model", Status: doctorWarn, Message: "no local GGUF models found", Detail: modelDir, Hint: "run `dmsh model download` or set a remote provider"}
 		if !dirWritable(modelDir) {
 			check.Status = doctorFail
 			check.Message = "models directory is not writable"
+			check.Hint = "fix permissions for the models directory"
 		}
 		return check
 	}
 	detail := modelDir
 	if !dirWritable(modelDir) {
-		return doctorCheck{Name: "model", Status: doctorWarn, Message: fmt.Sprintf("%d local GGUF model(s) found, but models directory is not writable", len(models)), Detail: detail}
+		return doctorCheck{Name: "model", Status: doctorWarn, Message: fmt.Sprintf("%d local GGUF model(s) found, but models directory is not writable", len(models)), Detail: detail, Hint: "fix permissions for the models directory"}
 	}
 	return doctorCheck{Name: "model", Status: doctorOK, Message: fmt.Sprintf("%d local GGUF model(s) found", len(models)), Detail: detail}
 }
@@ -228,12 +242,12 @@ func doctorBuildCheck() doctorCheck {
 	if strings.Contains(tags, "llama") {
 		return doctorCheck{Name: "build", Status: doctorOK, Message: "llama.cpp build detected", Detail: "tags=" + tags + ", " + runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH}
 	}
-	return doctorCheck{Name: "build", Status: doctorWarn, Message: "stub build (no local llama.cpp inference)", Detail: "rebuild with -tags llama for local GGUF inference; remote providers still work"}
+	return doctorCheck{Name: "build", Status: doctorWarn, Message: "stub build (no local llama.cpp inference)", Detail: "rebuild with -tags llama for local GGUF inference; remote providers still work", Hint: "rebuild with -tags llama if you need local inference"}
 }
 
 func doctorProviderBuildCheck(cfg config.Config) doctorCheck {
 	if cfg.Provider == config.ProviderLocal && !strings.Contains(buildTags(), "llama") {
-		return doctorCheck{Name: "provider/build", Status: doctorFail, Message: "local provider selected but this is a stub build", Detail: "rebuild with -tags llama or switch provider with `dmsh config set provider auto`"}
+		return doctorCheck{Name: "provider/build", Status: doctorFail, Message: "local provider selected but this is a stub build", Detail: "rebuild with -tags llama or switch provider with `dmsh config set provider auto`", Hint: "rebuild with -tags llama or switch to a remote provider"}
 	}
 	return doctorCheck{}
 }
@@ -241,17 +255,17 @@ func doctorProviderBuildCheck(cfg config.Config) doctorCheck {
 func doctorShellCheck(cfg config.Config) doctorCheck {
 	shell := strings.TrimSpace(cfg.Shell)
 	if shell == "" {
-		return doctorCheck{Name: "shell", Status: doctorWarn, Message: "shell is not configured"}
+		return doctorCheck{Name: "shell", Status: doctorWarn, Message: "shell is not configured", Hint: "set shell in config"}
 	}
 	// На Windows PowerShell/cmd обычно доступны без полного пути.
 	if filepath.IsAbs(shell) {
 		if _, err := os.Stat(shell); err != nil {
-			return doctorCheck{Name: "shell", Status: doctorWarn, Message: "configured shell not found", Detail: shell}
+			return doctorCheck{Name: "shell", Status: doctorWarn, Message: "configured shell not found", Detail: shell, Hint: "fix shell path in config"}
 		}
 		return doctorCheck{Name: "shell", Status: doctorOK, Message: "shell found", Detail: shell}
 	}
 	if _, err := exec.LookPath(shell); err != nil {
-		return doctorCheck{Name: "shell", Status: doctorWarn, Message: "configured shell is not in PATH", Detail: shell}
+		return doctorCheck{Name: "shell", Status: doctorWarn, Message: "configured shell is not in PATH", Detail: shell, Hint: "install the shell or update config"}
 	}
 	return doctorCheck{Name: "shell", Status: doctorOK, Message: "shell available", Detail: shell}
 }
@@ -261,7 +275,7 @@ func doctorProxyCheck(cfg config.Config) doctorCheck {
 	endpoint := remoteEndpoint(cfg.Provider, cfg.RemoteBaseURL)
 	via, err := p.Effective(endpoint)
 	if err != nil {
-		return doctorCheck{Name: "proxy", Status: doctorFail, Message: "proxy configuration is invalid", Detail: err.Error()}
+		return doctorCheck{Name: "proxy", Status: doctorFail, Message: "proxy configuration is invalid", Detail: err.Error(), Hint: "check proxy settings with `dmsh config show` or /settings"}
 	}
 	return doctorCheck{Name: "proxy", Status: doctorOK, Message: "proxy route resolved", Detail: fmt.Sprintf("endpoint=%s, route=%s", endpoint, proxyRouteLabel(via))}
 }
@@ -280,7 +294,7 @@ func doctorNetworkCheck(ctx context.Context, cfg config.Config) []doctorCheck {
 	d := net.Dialer{Timeout: 2 * time.Second}
 	conn, err := d.DialContext(dctx, "tcp", host)
 	if err != nil {
-		checks = append(checks, doctorCheck{Name: "network", Status: doctorWarn, Message: "cannot reach remote endpoint", Detail: host + ": " + err.Error()})
+		checks = append(checks, doctorCheck{Name: "network", Status: doctorWarn, Message: "cannot reach remote endpoint", Detail: host + ": " + err.Error(), Hint: "check network/proxy/provider endpoint settings"})
 		return checks
 	}
 	_ = conn.Close()
@@ -358,6 +372,9 @@ func printDoctor(out io.Writer, checks []doctorCheck) {
 			fmt.Fprintf(out, "[%s] %-14s %s (%s)\n", mark, c.Name, c.Message, c.Detail)
 		} else {
 			fmt.Fprintf(out, "[%s] %-14s %s\n", mark, c.Name, c.Message)
+		}
+		if c.Hint != "" {
+			fmt.Fprintf(out, "       hint: %s\n", c.Hint)
 		}
 	}
 	fmt.Fprintf(out, "\nSummary: %d ok, %d warning(s), %d failure(s)\n", len(checks)-warns-fails, warns, fails)
