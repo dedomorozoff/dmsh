@@ -202,7 +202,7 @@ func NewRootCmdWithConfig(cfg config.Config, firstRun ...bool) *cobra.Command {
 	cmd.Flags().BoolVar(&rf.jsonOut, "json", false, "print the result as JSON to stdout (no banners/colors; diagnostics to stderr)")
 	pf.BoolVar(&rf.debug, "debug", false, "write debug log with timings, provider and retry details")
 	pf.StringVar(&rf.debugFile, "debug-file", "dmsh-debug.log", "path to debug log file (used with --debug)")
-	pf.StringVar(&rf.sessionName, "session", "", "named session for persisted turns (use with resume_session)")
+	pf.StringVar(&rf.sessionName, "session", "", "named session for persisted turns")
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))

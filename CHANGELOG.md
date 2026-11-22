@@ -23,6 +23,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - CLI/provider error hints improved for missing model/build, proxy issues, auth failures, Ollama availability, and network errors.
 
 ### Fixed
+- `/alias` entries now expand before the prompt in one-shot and TUI requests; removed unreachable `/retry` state from the line-based handler and fixed the stale `--session` help.
 - Aligned README and REPL help with the safe dry-run default; the refusal message now points to `--dry-run=false` and first runs get a one-time notice about the compatibility flag.
 - Redacted secrets in provider notices, setup/model screens and download output; URL credentials are masked at the endpoint source.
 - Prevented configured secrets and URL credentials from being persisted in history/audit entries.

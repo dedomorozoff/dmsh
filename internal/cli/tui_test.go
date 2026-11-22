@@ -1005,15 +1005,18 @@ func TestStatuslineShowsRealModel(t *testing.T) {
 
 // captureEngine — минимальная заглушка llm.Engine для тестов TUI-потока.
 type captureEngine struct {
-	tokens []string
-	gen    string
+	tokens       []string
+	gen          string
+	system, user string
 }
 
-func (e *captureEngine) Generate(_ context.Context, _, _ string, _ llm.SamplingOptions) (string, error) {
+func (e *captureEngine) Generate(_ context.Context, system, user string, _ llm.SamplingOptions) (string, error) {
+	e.system, e.user = system, user
 	return e.gen, nil
 }
 
-func (e *captureEngine) Stream(_ context.Context, _, _ string, _ llm.SamplingOptions, tokens chan<- string) error {
+func (e *captureEngine) Stream(_ context.Context, system, user string, _ llm.SamplingOptions, tokens chan<- string) error {
+	e.system, e.user = system, user
 	for _, t := range e.tokens {
 		tokens <- t
 	}

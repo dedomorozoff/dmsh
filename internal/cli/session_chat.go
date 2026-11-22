@@ -14,6 +14,9 @@ import (
 
 // askStream отправляет запрос модели и стримит вывод полей на экран в реальном времени.
 func (s *session) askStream(ctx context.Context, mode, userInput string, out io.Writer) (prompt.Response, string, error) {
+	// Один вход в модель для REPL, TUI и one-shot — алиасы раскрываются здесь,
+	// чтобы во всех путях запрос уходил в промпт в развёрнутом виде.
+	userInput = expandAlias(s.cfg, userInput)
 	start := time.Now()
 	s.recordRequest(userInput)
 	cwd, _ := os.Getwd()
@@ -210,7 +213,6 @@ func (p *streamPrinter) metrics() (chunks, chars int, streamDur, ttft time.Durat
 	}
 	return
 }
-
 
 func getJSONValue(buf, key string) (value string, hasClosed bool, startIdx int) {
 	keyIdx := strings.Index(buf, `"`+key+`"`)

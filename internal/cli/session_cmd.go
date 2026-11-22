@@ -25,7 +25,7 @@ func newSessionCmd() *cobra.Command {
 				return err
 			}
 			if len(names) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No named sessions found. Use `dmsh --session <name>` with resume_session enabled.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No named sessions found. Use `dmsh --session <name>` to start one.")
 				return nil
 			}
 			for _, n := range names {

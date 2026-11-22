@@ -76,8 +76,7 @@ type session struct {
 	savedHist    int // индекс первой незаписанной записи в hist
 	input        LineReader
 	stats        SessionStats
-	lastInput    string        // последний запрос пользователя (для /retry)
-	retryPending bool          // /retry был введён — повторить lastInput
+	lastInput    string        // последний запрос пользователя
 	turns        []prompt.Turn // последние 5 пар диалога
 	stdinCtx     string        // данные из stdin pipe
 	autoYes      bool          // --yes: пропускать все подтверждения
@@ -252,4 +251,3 @@ func (s *session) confirmOK(out io.Writer, promptText string) (bool, error) {
 	}
 	return confirm(s.input, out, s, promptText)
 }
-

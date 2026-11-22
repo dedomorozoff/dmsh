@@ -39,10 +39,6 @@ var (
 	gray   = colorGray
 )
 
-// ErrRetry сигнализирует, что пользователь запросил /retry — повторить
-// последний запрос с альтернативным подходом.
-var ErrRetry = errors.New("retry requested")
-
 // errCancelQuestion сигнализирует об отмене clarification-вопроса.
 var errCancelQuestion = errors.New("cancelled")
 
@@ -112,14 +108,6 @@ func handleSlash(line string, out io.Writer, s *session) (stop bool) {
 		} else {
 			fmt.Fprintln(out, "Mouse: off. In TUI, native terminal text selection/copy is enabled; run /mouse on to restore UI clicks.")
 		}
-	case line == "/retry":
-		if s.lastInput == "" {
-			fmt.Fprintf(out, "%sNo previous request to retry.%s\n", yellow, reset)
-			return false
-		}
-		// Маркируем: вызывающий код должен повторить lastInput.
-		s.retryPending = true
-		return false
 	case strings.HasPrefix(line, "/export"):
 		handleExport(line, out, s)
 	case strings.HasPrefix(line, "/alias"):
@@ -587,7 +575,6 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %s/setup%s     — show how dmsh connects to the LLM and how to change it\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/settings%s  - show network settings (proxy, endpoint) and how to change them\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/mouse%s     - toggle mouse UI / native text selection+copy (TUI)\n", yellow, reset)
-	fmt.Fprintf(out, "  %s/retry%s     - re-run last request with alternate approach\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/export%s    — copy last command to clipboard or /export last > file\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/alias%s     — list aliases; /alias name=\"request\" to create; /alias -d name to delete\n", yellow, reset)
 	fmt.Fprintf(out, "  %s/bind%s      — show key bindings\n", yellow, reset)
