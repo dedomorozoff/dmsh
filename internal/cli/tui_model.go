@@ -6,12 +6,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/dedomorozoff/dmsh/internal/config"
-	"github.com/dedomorozoff/dmsh/internal/executor"
-	"github.com/dedomorozoff/dmsh/internal/prompt"
-	"github.com/dedomorozoff/dmsh/internal/netproxy"
 	"context"
 	"fmt"
+	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/executor"
+	"github.com/dedomorozoff/dmsh/internal/netproxy"
+	"github.com/dedomorozoff/dmsh/internal/prompt"
 	"path/filepath"
 )
 
@@ -59,6 +59,7 @@ type tuiModel struct {
 
 	state            tuiState
 	streaming        bool
+	planRunning      bool
 	streamed         bool
 	streamHasContent bool
 	streamCtx        context.Context
@@ -194,6 +195,20 @@ type streamDoneMsg struct {
 	err  error
 }
 
+// planReadyMsg приходит после генерации плана: шаги уже разобраны, осталось
+// положить их в todo и открыть окно редактирования.
+type planReadyMsg struct {
+	steps []string
+	err   error
+}
+
+// planRunDoneMsg — итог последовательного исполнения шагов плана.
+type planRunDoneMsg struct {
+	executed, failed int
+	output           string
+	err              error
+}
+
 // cmdDoneMsg — фоновая команда завершилась. seq отбрасывает устаревшие
 // результаты: пользователь мог запустить новую команду раньше.
 type cmdDoneMsg struct {
@@ -316,6 +331,37 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForToken(m.tokenCh, m.streamDone)
 		}
 		return m, nil
+	case planReadyMsg:
+		if msg.err != nil {
+			m.addLine(fmt.Sprintf("%splan failed: %v%s", colorRed, msg.err, colorReset))
+			return m, nil
+		}
+		if len(msg.steps) == 0 {
+			m.addLine(fmt.Sprintf("%sno plan steps received — rephrase the request%s", colorYellow, colorReset))
+			return m, nil
+		}
+		items, err := fillPlan(m.s, msg.steps)
+		if err != nil {
+			m.addLine(fmt.Sprintf("%splan failed: %v%s", colorRed, err, colorReset))
+			return m, nil
+		}
+		for _, item := range items {
+			m.addLine(fmt.Sprintf("%2d. %s", item.ID, item.Task))
+		}
+		m.addLine(fmt.Sprintf("%sreview the steps, then /plan run%s", colorGray, colorReset))
+		return m.openTodoMenu(), nil
+	case planRunDoneMsg:
+		m.planRunning = false
+		if msg.output != "" {
+			m.addLine(strings.TrimRight(msg.output, "\n"))
+		}
+		if msg.err != nil {
+			m.addLine(fmt.Sprintf("%splan run failed: %v%s", colorRed, msg.err, colorReset))
+			return m, nil
+		}
+		m.addLine(fmt.Sprintf("%splan finished: %d executed, %d failed%s",
+			colorGray, msg.executed, msg.failed, colorReset))
+		return m.openTodoMenu(), nil
 	case streamDoneMsg:
 		m.streaming = false
 		m.streamed = false
@@ -484,4 +530,3 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-

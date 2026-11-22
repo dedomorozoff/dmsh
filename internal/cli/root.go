@@ -206,6 +206,7 @@ func NewRootCmdWithConfig(cfg config.Config, firstRun ...bool) *cobra.Command {
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))
+	cmd.AddCommand(newPlanCmd(rf))
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newConfigCmd())

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,7 @@ import (
 // Mode switches come first so they are visible in the truncated menu.
 var slashCommands = []string{
 	"/mode", "/shell", "/help", "/clear", "/exit", "/quit",
-	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/stats", "/bind", "/alias", "/export", "/retry", "/search", "/copy",
+	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/plan", "/stats", "/bind", "/alias", "/export", "/retry", "/search", "/copy",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
@@ -30,6 +31,7 @@ var slashDesc = map[string]string{
 	"/proxy":    "shortcut for /settings",
 	"/mouse":    "toggle mouse UI / native text selection and copy",
 	"/todo":     "the model's task list: click a task to mark it done",
+	"/plan":     "plan: /plan <request>, review in /todo, then /plan run",
 	"/stats":    "session statistics",
 	"/search":   "search the output (Ctrl+F), F3 for the next match",
 	"/copy":     "copy the last block of output to the clipboard",
@@ -117,6 +119,45 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		return m.openSettings(), nil
 	case line == "/setup":
 		return m.openSetup(), nil
+	case line == "/plan":
+		if todoOpenCount(m) == 0 {
+			m.addLine(fmt.Sprintf("%susage: /plan <request> · /plan run · /todo to review%s", colorYellow, colorReset))
+			return m, nil
+		}
+		return m.openTodoMenu(), nil
+	case line == "/plan run":
+		if m.planRunning {
+			m.addLine(fmt.Sprintf("%sa plan is already running%s", colorYellow, colorReset))
+			return m, nil
+		}
+		if todoOpenCount(m) == 0 {
+			m.addLine(fmt.Sprintf("%sno open plan steps — generate one with /plan <request>%s", colorYellow, colorReset))
+			return m, nil
+		}
+		m.planRunning = true
+		m.addLine(fmt.Sprintf("%s(executing plan…)%s", colorGray, colorReset))
+		s, rf := m.s, m.rf
+		return m, func() tea.Msg {
+			var buf strings.Builder
+			ctx := context.Background()
+			executed, failed, err := executePlan(ctx, s, rf, &buf, &buf)
+			return planRunDoneMsg{executed: executed, failed: failed, output: buf.String(), err: err}
+		}
+	case strings.HasPrefix(line, "/plan "):
+		request := strings.TrimSpace(strings.TrimPrefix(line, "/plan "))
+		if request == "" {
+			m.addLine(fmt.Sprintf("%susage: /plan <request>%s", colorYellow, colorReset))
+			return m, nil
+		}
+		m.addLine(fmt.Sprintf("%s(building plan…)%s", colorGray, colorReset))
+		s := m.s
+		return m, func() tea.Msg {
+			resp, _, err := s.askStream(context.Background(), "ask", planGenerationRequest(request), io.Discard)
+			if err != nil {
+				return planReadyMsg{err: err}
+			}
+			return planReadyMsg{steps: parsePlanSteps(resp.Explanation)}
+		}
 	case line == "/todo", line == "todo":
 		return m.openTodoMenu(), nil
 	case strings.HasPrefix(line, "/todo "):
@@ -188,6 +229,7 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s!cmd%s         — run shell command directly", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/cd%s path     — change directory", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/todo%s        — the model's task list; click a task to toggle it", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/plan%s        — /plan <request>, review in /todo, /plan run to execute", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/pwd%s         — current directory", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))

@@ -275,6 +275,12 @@ Notes:
   and the model is told to return the command in its JSON answer instead.
 - `todo` lives in the session only (up to 50 items). Look at it with `/todo`,
   drop it with `/todo clear`.
+- **Plan mode:** `/plan <request>` (TUI) or `dmsh plan <request>` asks the model
+  for a numbered checklist and puts the steps into `todo`. Review or untick
+  steps in the `/todo` window, then run the open ones with `/plan run` or
+  `dmsh plan --run <request>`. Each step goes through the same policy and
+  confirmation path as a typed request; high-risk steps are never auto-run.
+  `--json` prints the generated steps.
 - `ask` needs a terminal to read from: it works in the REPL and in one-shot
   mode. In the TUI there is no way to block mid-task, so the model is told to
   use `intent=ask_clarification` instead. When stdin is piped into dmsh it is

@@ -16,6 +16,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Project documentation: `CONTRIBUTING.md`, `SECURITY.md`, `docs/architecture.md`.
 - Release integrity gate: every release now ships verified `SHA256SUMS`, a GPG signature (`SHA256SUMS.asc`) and a CycloneDX SBOM; the publish step fails without them. Reproducible stub build via `make build-stub-repro`.
 - Shared diagnostics wording (`internal/diag`) used by both provider errors and CLI hints, so one cause has one phrase.
+- Plan mode: `/plan <request>` and `dmsh plan <request>` generate a reviewed checklist in `todo`; `/plan run` / `dmsh plan --run` execute the open steps through the normal policy/confirmation/audit path.
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`).

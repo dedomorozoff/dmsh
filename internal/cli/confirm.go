@@ -14,6 +14,11 @@ import (
 // confirm спрашивает пользователя y/n. Возвращает true только при явном yes.
 // Если пользователь вводит slash-команду, она обрабатывается и возвращается ErrSlashCommand.
 func confirm(r LineReader, out io.Writer, s *session, promptText string) (bool, error) {
+	// TUI has no line reader: a command that needs confirmation must be
+	// refused, not panic on a nil interface.
+	if r == nil {
+		return false, nil
+	}
 	fmt.Fprintf(out, "%s [y/N]: ", promptText)
 	answer, err := r.ReadLine()
 	if err != nil {

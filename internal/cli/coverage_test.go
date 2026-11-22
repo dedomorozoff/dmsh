@@ -159,6 +159,15 @@ func TestSmallPureHelpers(t *testing.T) {
 	}
 }
 
+func TestConfirmWithoutInputReaderRefuses(t *testing.T) {
+	s := &session{}
+	var out bytes.Buffer
+	ok, err := s.confirmOK(&out, "execute?")
+	if ok || err != nil {
+		t.Fatalf("confirm with no reader = %v, %v", ok, err)
+	}
+}
+
 func TestConfirmOKAndProxyAddressFlag(t *testing.T) {
 	yes := &session{autoYes: true}
 	if ok, err := yes.confirmOK(io.Discard, "execute?"); !ok || err != nil {
