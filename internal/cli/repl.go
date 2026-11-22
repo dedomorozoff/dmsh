@@ -225,7 +225,7 @@ func runCommandWithCorrection(ctx context.Context, s *session, rf *rootFlags, re
 	// Самозащита: функция никогда не выполняет команды в dry-run-режиме,
 	// даже если её вызовут из пути без внешней проверки DryRun.
 	if rf.cfg.DryRun {
-		fmt.Fprintln(out, "(dry-run: command not executed)")
+		fmt.Fprintln(out, dryRunNotice)
 		return nil
 	}
 
@@ -603,7 +603,7 @@ func showHelp(out io.Writer) {
 	fmt.Fprintf(out, "  %sShift+Tab%s  — cycle modes: ai → help → terminal\n", yellow, reset)
 	fmt.Fprintf(out, "  %sCtrl+P%s then type \"mode\" — pick a mode in the palette\n\n", yellow, reset)
 	fmt.Fprintf(out, "%sExamples:%s\n  show all txt files\n  find errors in logs\n  start docker\n\n", bold, reset)
-	fmt.Fprintf(out, "%s Default: %sdry-run=false%s (commands execute).\n  Use --dry-run to enable safe mode, --preview for a review step,\n  or --yes to auto-approve confirmations in scripts.\n\n", bold, green, reset)
+	fmt.Fprintf(out, "%s Default: %sdry-run=true%s (commands are shown, not executed).\n  Use --dry-run=false to allow low-risk commands, --preview for a review step,\n  or --yes to auto-approve confirmations in scripts.\n\n", bold, green, reset)
 }
 
 func showKeyBindings(out io.Writer) {

@@ -96,7 +96,7 @@ func runOneShot(cmd *cobra.Command, rf *rootFlags, input string) error {
 		return nil
 	}
 	if rf.cfg.DryRun {
-		fmt.Fprintln(cmd.OutOrStdout(), "(dry-run: command not executed)")
+		fmt.Fprintln(cmd.OutOrStdout(), dryRunNotice)
 		return nil
 	}
 	if !dec.Allowed {

@@ -22,6 +22,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - CLI/provider error hints improved for missing model/build, proxy issues, auth failures, Ollama availability, and network errors.
 
 ### Fixed
+- Aligned README and REPL help with the safe dry-run default; the refusal message now points to `--dry-run=false` and first runs get a one-time notice about the compatibility flag.
 - Prevented configured secrets and URL credentials from being persisted in history/audit entries.
 - Redacted credentials in proxy-related error messages and doctor details.
 

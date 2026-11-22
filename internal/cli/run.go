@@ -80,7 +80,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return nil
 			}
 			if rf.cfg.DryRun {
-				fmt.Fprintln(cmd.OutOrStdout(), "(dry-run: command not executed)")
+				fmt.Fprintln(cmd.OutOrStdout(), dryRunNotice)
 				return nil
 			}
 			return runCommandWithCorrection(ctx, s, rf, resp, cmd.OutOrStdout(), cmd.ErrOrStderr())

@@ -22,6 +22,23 @@ type rootFlags struct {
 	debug       bool
 	debugFile   string
 	sessionName string
+	firstRun    bool
+}
+
+// dryRunNotice explains both the refusal and the opt-out at the moment the
+// user hits it: a bare "not executed" looked like a failure.
+const dryRunNotice = "(dry-run: command not executed; pass --dry-run=false to enable low-risk execution)"
+
+// notifyFirstRun warns once about the safe default. Users with an existing
+// config already have an explicit dry_run value written by an older version,
+// so only a missing config file needs the notice.
+func (rf *rootFlags) notifyFirstRun(cmd *cobra.Command) {
+	if !rf.firstRun || rf.jsonOut {
+		return
+	}
+	rf.firstRun = false
+	fmt.Fprintln(cmd.ErrOrStderr(), "dmsh: dry-run is on by default: commands are shown, not executed.")
+	fmt.Fprintln(cmd.ErrOrStderr(), "      Use --dry-run=false to allow low-risk commands to run (previous behavior).")
 }
 
 // providerValue — pflag.Value для провайдера инференса: принимает только
@@ -97,15 +114,18 @@ func NewRootCmd() *cobra.Command {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dmsh: "+err.Error()+" (run `dmsh doctor` for diagnostics)")
 	}
-	return NewRootCmdWithConfig(cfg)
+	return NewRootCmdWithConfig(cfg, !config.ConfigExists())
 }
 
 // NewRootCmdWithConfig собирает корень с уже готовым конфигом. Так делает
 // генератор man-страниц: значения по умолчанию печатаются в man, и брать их
 // из файла пользователя нельзя — туда уехали бы его путь к модели,
-// провайдер и ключ.
-func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
+// провайдер и ключ. Необязательный firstRun включается только реальным CLI.
+func NewRootCmdWithConfig(cfg config.Config, firstRun ...bool) *cobra.Command {
 	rf := &rootFlags{cfg: cfg}
+	if len(firstRun) > 0 {
+		rf.firstRun = firstRun[0]
+	}
 
 	cmd := &cobra.Command{
 		Use:   "dmsh [query]",
@@ -131,6 +151,9 @@ func NewRootCmdWithConfig(cfg config.Config) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			if cmd == cmd.Root() || cmd.Name() == "ask" || cmd.Name() == "run" {
+				rf.notifyFirstRun(cmd)
+			}
 			if rf.noTools {
 				rf.cfg.ToolsEnabled = false
 			}

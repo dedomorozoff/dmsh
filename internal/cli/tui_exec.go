@@ -143,7 +143,7 @@ func (m tuiModel) startLLMStream(mode, input string) (tuiModel, tea.Cmd) {
 
 func (m tuiModel) executeResponse(resp prompt.Response) (tuiModel, tea.Cmd) {
 	if m.rf.cfg.DryRun {
-		m.addLine("(dry-run: command not executed)")
+		m.addLine("(dry-run: command not executed; set dry_run=false in config to enable)")
 		return m, nil
 	}
 	if m.rf.cfg.Mode == config.ModeHelp {
@@ -423,4 +423,3 @@ func waitForToken(ch <-chan tokenMsg, done <-chan streamResult) tea.Cmd {
 		}
 	}
 }
-

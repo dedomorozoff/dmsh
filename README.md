@@ -19,9 +19,9 @@ It can also talk to a local [Ollama](https://ollama.ai) server, or to the
    `sudo`, package changes, etc. require confirmation).
 4. If approved, the command runs in your shell and the result is shown.
 
-By default AI-suggested commands **are executed automatically** if they
-pass the safety check and are rated low-risk. Pass `--dry-run` (or set
-`dry_run` in the config) to preview commands without executing them.
+By default dmsh is in **dry-run** mode: AI-suggested commands are shown but
+**not executed**. Pass `--dry-run=false` (or set `dry_run: false` in the
+config) to let low-risk commands run automatically, as in earlier versions.
 
 For an extra review layer, pass `--preview`: before execution dmsh shows the
 command with its options highlighted and the risk level, then asks for an
@@ -442,9 +442,11 @@ You can extend both lists via config (`danger_patterns`,
 `suspicious_patterns`). Blocked patterns also apply to commands the
 model suggests as corrections.
 
-Note: out of the box dmsh is *not* dry-run. If you want a strict
-review-everything workflow, use Help mode or `--dry-run`; add `--preview`
-for a highlighted review step or `--yes` to auto-approve in scripts.
+Note: out of the box dmsh *is* in dry-run mode — commands are displayed but
+never executed. That is the strict review-everything workflow. To restore
+automatic execution of low-risk commands, pass `--dry-run=false` or set
+`dry_run: false` in the config; add `--preview` for a highlighted review
+step or `--yes` to auto-approve in scripts.
 
 ## Building
 

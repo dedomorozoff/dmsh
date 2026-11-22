@@ -253,16 +253,16 @@ func Default() Config {
 		// RemoteModel намеренно пуст: дефолт зависит от провайдера
 		// (DefaultModelFor), и зашивать его сюда значило бы тащить Pollinations
 		// в Ollama. Validate подставляет нужный.
-		SearchModel:  DefaultSearchModel,
-		Threads:      hw.CPUCores,
-		CtxSize:      4096,
-		GPULayers:    gpuLayers,
-		MaxTokens:    1024,
-		Temperature:  0.2,
-		TopP:         0.9,
-		Shell:        defaultShell(),
-		HistoryFile:  defaultHistoryFile(),
-		AuditFile:    defaultAuditFile(),
+		SearchModel: DefaultSearchModel,
+		Threads:     hw.CPUCores,
+		CtxSize:     4096,
+		GPULayers:   gpuLayers,
+		MaxTokens:   1024,
+		Temperature: 0.2,
+		TopP:        0.9,
+		Shell:       defaultShell(),
+		HistoryFile: defaultHistoryFile(),
+		AuditFile:   defaultAuditFile(),
 		// Безопасный дефолт: команды показываются, но не выполняются, пока
 		// пользователь явно не снимет dry-run (флаг --dry-run=false или
 		// настройка в конфиге). Совпадает с политикой AGENTS.md.
@@ -420,6 +420,18 @@ func userConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "dmsh", "config.json"), nil
+}
+
+// ConfigExists reports whether the user has ever saved a config. A missing
+// file means the safe defaults are in force and the user has not made an
+// explicit choice about dry-run yet.
+func ConfigExists() bool {
+	path, err := userConfigPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
 }
 
 func defaultShell() string {
