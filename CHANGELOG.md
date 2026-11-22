@@ -18,6 +18,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Shared diagnostics wording (`internal/diag`) used by both provider errors and CLI hints, so one cause has one phrase.
 - Plan mode: `/plan <request>` and `dmsh plan <request>` generate a reviewed checklist in `todo`; `/plan run` / `dmsh plan --run` execute the open steps through the normal policy/confirmation/audit path.
 - `dmsh session rename <old> <new>` for named sessions (including the default one), with overwrite protection.
+- Feedback hints are now English, matching the rest of the interface; Russian stderr is still recognized as input.
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`); no source or test file is now over 600 lines.

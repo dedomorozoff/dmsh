@@ -59,6 +59,7 @@ make fmt
 - Use `gofmt`/`go fmt ./...`.
 - Keep comments short and only where logic is non-obvious.
 - Follow existing naming and structure in `internal/*` packages.
+- Language policy: Go code, godoc and comments are English; all user-facing output is English (there is no locale switch yet). Detectors may *read* non-English input such as Russian Windows error text, but hints must be returned in English.
 - When changing CGO/llama code, validate memory lifecycle and cancellation behavior.
 
 ## Tests
