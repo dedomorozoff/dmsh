@@ -12,6 +12,7 @@ import (
 
 	"github.com/dedomorozoff/dmsh/internal/config"
 	"github.com/dedomorozoff/dmsh/internal/model"
+	"github.com/dedomorozoff/dmsh/internal/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ func listLocalModels(out io.Writer) {
 
 	all, err := d.ListAllModels()
 	if err != nil {
-		fmt.Fprintf(out, "scan error: %v\n", err)
+		fmt.Fprintf(out, "scan error: %s\n", redact.Text(fmt.Sprint(err)))
 	}
 	if len(all) > 0 {
 		fmt.Fprintln(out, "\n=== Downloaded ===")
@@ -197,7 +198,7 @@ func newModelCmd(rf *rootFlags) *cobra.Command {
 				checked, verr := model.VerifySHA256Sidecar(p)
 				switch {
 				case verr != nil:
-					msg := verr.Error()
+					msg := redact.Text(verr.Error())
 					if checked {
 						fmt.Fprintf(cmd.OutOrStdout(), "%s: FAIL (%s)\n", name, msg)
 					} else {
@@ -361,7 +362,7 @@ func runModelWizard(cmd *cobra.Command) error {
 }
 
 func downloadURL(cmd *cobra.Command, d *model.Downloader, url string) error {
-	fmt.Fprintf(cmd.OutOrStdout(), "Downloading %s ...\n", url)
+	fmt.Fprintf(cmd.OutOrStdout(), "Downloading %s ...\n", redact.URL(url))
 	path, err := d.DownloadURL(url, progressFn(cmd.OutOrStdout()))
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
@@ -382,7 +383,7 @@ func setDefault(cmd *cobra.Command, name string) {
 	cfg, _ := config.Load()
 	cfg.DefaultModel = name
 	if err := config.Save(cfg); err != nil {
-		fmt.Fprintf(cmd.OutOrStdout(), "Failed to save config: %v\n", err)
+		fmt.Fprintf(cmd.OutOrStdout(), "Failed to save config: %s\n", redact.Text(fmt.Sprint(err)))
 	} else {
 		fmt.Fprintf(cmd.OutOrStdout(), "Model set as default\n")
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/dedomorozoff/dmsh/internal/diag"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 )
 
@@ -23,28 +24,28 @@ func ErrorHint(err error) string {
 	}
 	switch {
 	case errors.Is(err, llm.ErrNoLocalModel):
-		return "model is not downloaded: run `dmsh model download` or switch provider with `/setup`; run `dmsh doctor`"
+		return diag.HintLocalModelMissing
 	case errors.Is(err, llm.ErrNotBuiltWithCGO):
-		return "local inference is unavailable in this build: rebuild with `-tags llama` or use a remote provider; run `dmsh doctor`"
+		return diag.HintNoCGO
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case IsUsageError(err):
-		return "run with --help for usage"
+		return diag.HintUsage
 	case IsConfigError(err):
-		return "check configuration with `dmsh config show` or `dmsh doctor`"
+		return diag.HintConfig
 	case isProxyError(msg):
-		return "proxy is unavailable or misconfigured: check proxy settings with `dmsh config show` or `dmsh doctor`"
+		return diag.HintProxy
 	case isAuthError(msg):
-		return "set POLLINATIONS_API_KEY or configure remote_api_key; run `dmsh doctor`"
+		return diag.HintAPIKeyRequired
 	case isOllamaUnavailable(msg):
-		return "Ollama is not responding: start it with `ollama serve` and check remote_base_url; run `dmsh doctor`"
+		return diag.HintOllamaNotRunning
 	case isNoNetworkError(msg):
-		return "no network connection or remote endpoint unreachable: check network/proxy/provider settings; run `dmsh doctor`"
+		return diag.HintNoNetwork
 	case IsProviderError(err):
-		return "check provider/model/network with `dmsh config show` or `dmsh doctor`"
+		return diag.HintProvider
 	default:
-		return "run `dmsh doctor` for diagnostics"
+		return diag.HintDoctor
 	}
 }
 

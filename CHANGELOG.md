@@ -15,6 +15,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Centralized secret redaction utilities used for audit/history and diagnostics paths.
 - Project documentation: `CONTRIBUTING.md`, `SECURITY.md`, `docs/architecture.md`.
 - Release integrity gate: every release now ships verified `SHA256SUMS`, a GPG signature (`SHA256SUMS.asc`) and a CycloneDX SBOM; the publish step fails without them. Reproducible stub build via `make build-stub-repro`.
+- Shared diagnostics wording (`internal/diag`) used by both provider errors and CLI hints, so one cause has one phrase.
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`).
@@ -23,6 +24,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 
 ### Fixed
 - Aligned README and REPL help with the safe dry-run default; the refusal message now points to `--dry-run=false` and first runs get a one-time notice about the compatibility flag.
+- Redacted secrets in provider notices, setup/model screens and download output; URL credentials are masked at the endpoint source.
 - Prevented configured secrets and URL credentials from being persisted in history/audit entries.
 - Redacted credentials in proxy-related error messages and doctor details.
 

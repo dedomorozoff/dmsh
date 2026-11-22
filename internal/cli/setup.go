@@ -439,20 +439,21 @@ func (m tuiModel) setupDirty() bool {
 // окна: в TUI тот же список открывается через Ctrl+P.
 func showSetup(out io.Writer, s *session) {
 	provider := currentProvider(s, "")
+	clean := func(v string) string { return redactOutput(s.cfg, v) }
 	fmt.Fprintf(out, "\n%s%s=== setup: how dmsh talks to the LLM ===%s\n", bold, cyan, reset)
-	fmt.Fprintf(out, "  %sProvider:%s  %s\n", bold, reset, provider)
+	fmt.Fprintf(out, "  %sProvider:%s  %s\n", bold, reset, clean(string(provider)))
 	if provider == config.ProviderLocal {
-		fmt.Fprintf(out, "  %sLocal:%s     %s\n", bold, reset, orPlaceholder(shortModelName(s.cfg.ModelPath), "not found"))
+		fmt.Fprintf(out, "  %sLocal:%s     %s\n", bold, reset, clean(orPlaceholder(shortModelName(s.cfg.ModelPath), "not found")))
 	} else {
 		fmt.Fprintf(out, "  %sRemote:%s    %s\n", bold, reset,
-			firstNonEmpty(s.cfg.RemoteModel, config.DefaultModelFor(provider)))
-		fmt.Fprintf(out, "  %sEndpoint:%s  %s\n", bold, reset, remoteEndpoint(provider, s.cfg.RemoteBaseURL))
+			clean(firstNonEmpty(s.cfg.RemoteModel, config.DefaultModelFor(provider))))
+		fmt.Fprintf(out, "  %sEndpoint:%s  %s\n", bold, reset, clean(remoteEndpoint(provider, s.cfg.RemoteBaseURL)))
 	}
 	if provider == config.ProviderOllama {
 		fmt.Fprintf(out, "  %sAuth:%s      not needed (local server)\n", gray, reset)
 		fmt.Fprintf(out, "  %sStart it:%s  ollama serve\n", gray, reset)
 	} else {
-		fmt.Fprintf(out, "  %sAuth:%s      %s\n", gray, reset, apiKeyLabel(provider, s.cfg))
+		fmt.Fprintf(out, "  %sAuth:%s      %s\n", gray, reset, clean(apiKeyLabel(provider, s.cfg)))
 	}
 	fmt.Fprintf(out, "\n  change: dmsh --provider local|pollinations|ollama|auto\n")
 	fmt.Fprintf(out, "  save:   dmsh config set provider ollama\n")

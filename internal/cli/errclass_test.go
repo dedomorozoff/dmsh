@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dedomorozoff/dmsh/internal/diag"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 )
 
@@ -32,6 +33,27 @@ func TestErrorHint_UnifiedCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The CLI and the provider layer must print the same phrase for the same
+// cause; pin the exact wording so a local edit cannot drift again.
+func TestErrorHintUsesDiagWording(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("llm: pollinations HTTP 401: unauthorized"), diag.HintAPIKeyRequired},
+		{errors.New("llm: ollama request failed: dial tcp: connection refused"), diag.HintOllamaNotRunning},
+		{errors.New("dial tcp: lookup api.example.com: no such host"), diag.HintNoNetwork},
+		{errors.New("proxy: invalid address"), diag.HintProxy},
+		{llm.ErrNoLocalModel, diag.HintLocalModelMissing},
+		{llm.ErrNotBuiltWithCGO, diag.HintNoCGO},
+	}
+	for _, tc := range cases {
+		if got := ErrorHint(tc.err); got != tc.want {
+			t.Errorf("ErrorHint(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }
 

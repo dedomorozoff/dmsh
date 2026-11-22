@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dedomorozoff/dmsh/internal/diag"
 )
 
 // Значения по умолчанию для удалённых провайдеров.
@@ -186,7 +188,7 @@ func transportHint(name string) string {
 	if name != remoteProviderOllama {
 		return ""
 	}
-	return "\n  hint: is ollama running? start it with `ollama serve` (default http://127.0.0.1:11434)"
+	return "\n  hint: " + diag.HintOllamaNotRunning
 }
 
 // remoteErrorHint переводит частые ответы провайдера в actionable текст.
@@ -195,19 +197,19 @@ func transportHint(name string) string {
 func remoteErrorHint(name string, code int) string {
 	if name == remoteProviderOllama {
 		if code == http.StatusNotFound {
-			return "model not found — pull it first: ollama pull <model>"
+			return diag.HintOllamaModel
 		}
 		return ""
 	}
 	switch code {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "the provider needs an API key — set POLLINATIONS_API_KEY (get one at https://enter.pollinations.ai/keys)"
+		return diag.HintAPIKeyRequired
 	case http.StatusPaymentRequired:
-		return "out of Pollen — top up at https://enter.pollinations.ai/pollen or pick another model with --remote-model"
+		return diag.HintOutOfPollen
 	case http.StatusTooManyRequests:
-		return "rate limited — wait a moment, or lower --max-tokens"
+		return diag.HintRateLimited
 	case http.StatusNotFound:
-		return "unknown model or endpoint — see the catalog at https://gen.pollinations.ai/models"
+		return diag.HintUnknownModel
 	default:
 		return ""
 	}

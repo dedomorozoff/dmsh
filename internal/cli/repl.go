@@ -14,6 +14,7 @@ import (
 	"github.com/dedomorozoff/dmsh/internal/feedback"
 	"github.com/dedomorozoff/dmsh/internal/llm"
 	"github.com/dedomorozoff/dmsh/internal/prompt"
+	"github.com/dedomorozoff/dmsh/internal/redact"
 )
 
 // Цветовые escape-коды ANSI. Используются во всём пакете cli.
@@ -527,7 +528,7 @@ func showsRemoteProvider(provider config.Provider, modelPath string) bool {
 // запросам, а не к локальной модели.
 func remoteEndpoint(provider config.Provider, base string) string {
 	if s := strings.TrimSpace(base); s != "" {
-		return s
+		return redact.URL(s)
 	}
 	if provider == config.ProviderOllama {
 		return llm.DefaultOllamaBaseURL

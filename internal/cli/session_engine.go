@@ -212,7 +212,7 @@ func (s *session) printNotice(out io.Writer) {
 	if s.notice == "" {
 		return
 	}
-	fmt.Fprintf(out, "%s[dmsh]%s %s%s%s\n", yellow, reset, yellow, s.notice, reset)
+	fmt.Fprintf(out, "%s[dmsh]%s %s%s%s\n", yellow, reset, yellow, redactOutput(s.cfg, s.notice), reset)
 }
 
 func resolveModelPath(cfg config.Config) (string, error) {
@@ -317,4 +317,3 @@ func (s *session) switchModel(path string) error {
 	_ = old.Close()
 	return nil
 }
-
