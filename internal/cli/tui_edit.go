@@ -1,7 +1,6 @@
 package cli
 
 import (
-
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -62,8 +61,12 @@ func deleteWordBack(s string, pos *int) string {
 	for i > 0 && runes[i-1] != ' ' {
 		i--
 	}
+	old := *pos
 	*pos = i
-	return string(append(runes[:i], runes[*pos:]...))
+	out := make([]rune, 0, len(runes)-(old-i))
+	out = append(out, runes[:i]...)
+	out = append(out, runes[old:]...)
+	return string(out)
 }
 
 func runeSliceLen(s string) int {
@@ -116,4 +119,3 @@ func deleteWordForward(s string, pos *int) string {
 	out := string(append(runes[:*pos], runes[i:]...))
 	return out
 }
-

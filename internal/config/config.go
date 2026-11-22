@@ -647,8 +647,9 @@ func detectDarwinRAM() int {
 	return 8 // Default fallback
 }
 
-// executeCommand выполняет команду и возвращает её вывод.
-func executeCommand(name string, args ...string) (string, error) {
+// executeCommand выполняет команду и возвращает её вывод. Переменная, чтобы
+// тесты могли подменить вывод системных утилит.
+var executeCommand = func(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	output, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(output)), err
