@@ -10,7 +10,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 ### Added
 - `--debug` / `--debug-file` options for redacted debug logging (request timings, provider/tool diagnostics).
 - Extended session statistics (`/stats`): request errors, tool steps, TTFT, request/stream timing and stream counters.
-- Config schema versioning and migrations (`config_version`) with legacy proxy/config normalization on load.
+- Config schema versioning with version-dispatch migrations (`config_version`): legacy `proxy_url` is normalized on load and future versions are rejected explicitly.
 - Unified CLI error hint/kind/exit-code classification helpers for more consistent diagnostics.
 - Centralized secret redaction utilities used for audit/history and diagnostics paths.
 - Project documentation: `CONTRIBUTING.md`, `SECURITY.md`, `docs/architecture.md`.

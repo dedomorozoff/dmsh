@@ -242,6 +242,11 @@ func (d *Downloader) DownloadCtx(ctx context.Context, info ModelInfo, progress f
 	if d.Exists(info.Name) {
 		return destPath, nil
 	}
+	if info.SizeMB > 0 {
+		if err := checkFreeSpace(destPath, int64(info.SizeMB)*1024*1024); err != nil {
+			return "", fmt.Errorf("download %s: %w", info.Name, err)
+		}
+	}
 
 	tmpPath := destPath + ".tmp"
 	if err := d.downloadFile(ctx, info.URL, tmpPath, info.SHA256, progress); err != nil {
@@ -315,6 +320,13 @@ func (d *Downloader) downloadFile(ctx context.Context, rawURL, destPath, wantSHA
 	case http.StatusOK, http.StatusPartialContent:
 	default:
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	// Content-Length covers arbitrary URLs; the catalog check above covers
+	// known models before any request is made.
+	if resp.ContentLength > 0 {
+		if err := checkFreeSpace(destPath, resp.ContentLength); err != nil {
+			return err
+		}
 	}
 
 	flags := os.O_CREATE | os.O_WRONLY

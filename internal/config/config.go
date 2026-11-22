@@ -296,6 +296,9 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	if err := migrate(&cfg, data); err != nil {
+		return cfg, fmt.Errorf("migrate config %s: %w", path, err)
+	}
 
 	// Auto-update GPU layers if not set (0) and GPU is available
 	hw := DetectHardware()
