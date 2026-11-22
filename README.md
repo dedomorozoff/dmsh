@@ -296,8 +296,9 @@ Disable all tools with `--no-tools` or `dmsh config set tools false`.
 Start with `dmsh repl`. The interface is a full-screen Bubble Tea TUI
 with scrollback, live streaming and a status line. Three modes:
 
-- **AI** (default) — generates commands and executes them automatically
-  after the safety check; anything non-trivial asks for confirmation.
+- **AI** (default) — generates commands and shows them; nothing runs while
+  dry-run is on (the default). With `--dry-run=false`, low-risk commands run
+  after the safety check and anything non-trivial asks for confirmation.
 - **Help** — shows command + explanation, you run it yourself. The
   `run_command` tool is not even advertised to the model in this mode.
 - **Terminal** — a real shell session in a pseudo-terminal, drawn **inside
@@ -307,6 +308,11 @@ with scrollback, live streaming and a status line. Three modes:
 
 Switch with `Shift+Tab` (cycles ai → help → terminal), the command palette
 on `Ctrl+P`, `/mode` (opens the mode list) or `/mode ai|help|shell`.
+
+Named sessions keep the last few turns separate: start one with
+`dmsh --session work`, manage them with `dmsh session list`, `session rename`,
+`session path` and `session delete`. A plain `dmsh` session writes its turns
+to the default file unless `resume_session` is enabled.
 
 Long commands (composer, tests, a build) run in the background: the prompt
 stays free and the output appears in the transcript **while the command is
