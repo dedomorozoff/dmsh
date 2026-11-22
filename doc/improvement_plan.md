@@ -68,6 +68,16 @@
       `modelmenu_tui_test.go`, CLI `model verify/remove/prune`.
 - [x] Единый JSON-контракт для ошибок/кодов выхода: в JSON-ошибках добавлены `kind` и коды выхода (2 usage, 3 config, 4 provider/network, exec — passthrough кода команды); советы `doctor` пока точечно в сообщениях/подсказках.
 
+**#24 (P2, релизный гейт) закрыт 2026-11-22:** `release.yml` перед созданием
+релиза генерирует CycloneDX SBOM (`make sbom`, pinned `cyclonedx-gomod@v1.12.0`),
+собирает `SHA256SUMS` по всем файлам `dist/`, проверяет их `sha256sum --check`
+и подписывает контрольные суммы GPG (`SHA256SUMS.asc`, `gpg --verify`).
+Без секретов `RELEASE_GPG_PRIVATE_KEY` / `RELEASE_GPG_PASSPHRASE` джоб
+падает до шага публикации. FreeBSD-stub теперь собирается через
+`make build-stub-repro` (CGO off, `-trimpath`, без VCS-штампа, фиксированная
+дата). Гейт защищён тестом `TestReleaseWorkflowHasIntegrityGate`,
+команды проверены локально на одноразовом ключе.
+
 **Решения:** `dry_run=true` по умолчанию (`--dry-run=false` для явного
 выполнения). Каталог `лопл/` удалён пользователем. Shell completion уже
 предоставляется Cobra (`dmsh completion ...`).

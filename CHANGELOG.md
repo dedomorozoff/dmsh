@@ -14,6 +14,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Unified CLI error hint/kind/exit-code classification helpers for more consistent diagnostics.
 - Centralized secret redaction utilities used for audit/history and diagnostics paths.
 - Project documentation: `CONTRIBUTING.md`, `SECURITY.md`, `docs/architecture.md`.
+- Release integrity gate: every release now ships verified `SHA256SUMS`, a GPG signature (`SHA256SUMS.asc`) and a CycloneDX SBOM; the publish step fails without them. Reproducible stub build via `make build-stub-repro`.
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`).

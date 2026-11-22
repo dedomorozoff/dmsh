@@ -31,3 +31,14 @@ When reporting, include:
 - `dmsh` can execute shell commands. Safety policy, confirmations, allowlist rules, and dry-run/preview modes are important controls, but they are not a substitute for reviewing commands.
 - Keep secrets (API keys, proxy credentials) in environment variables or protected config locations; avoid sharing logs/config/history/audit files without redaction.
 - Use `dmsh doctor` and debug logs carefully when filing issues; redact sensitive data even though dmsh attempts to redact known secrets.
+
+## Verifying a release
+
+Every release ships `SHA256SUMS`, `SHA256SUMS.asc` (an ASCII-armored detached GPG signature of the checksums) and a CycloneDX SBOM. Verify the archive you downloaded before running it:
+
+```bash
+sha256sum --check SHA256SUMS
+gpg --verify SHA256SUMS.asc SHA256SUMS
+```
+
+On macOS use `shasum -a 256 --check SHA256SUMS`. The release workflow fails if the checksums, the SBOM or the signature are missing, so an unsigned artifact must never appear in a release.

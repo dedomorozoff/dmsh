@@ -30,6 +30,13 @@ endif
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)
 LDFLAGS ?= -s -w -X github.com/dedomorozoff/dmsh/internal/cli.Version=$(VERSION) -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$(BUILD_DATE)
 
+# Reproducible stub build: trimmed paths, no VCS stamping, fixed date/build id.
+# Override REPRO_BUILD_DATE when a source-date epoch must be reflected.
+REPRO_BUILD_DATE ?= 1970-01-01T00:00:00Z
+REPRO_LDFLAGS ?= -s -w -buildid= -X github.com/dedomorozoff/dmsh/internal/cli.Version=$(VERSION) -X github.com/dedomorozoff/dmsh/internal/cli.BuildDate=$(REPRO_BUILD_DATE)
+CYCLONEDX_GOMOD ?= cyclonedx-gomod
+SBOM_OUT ?= bin/dmsh.sbom.json
+
 # По умолчанию собираем CPU-вариант. Через GPU=1 включаются ускорители.
 GPU ?= 0
 # Путь к CUDA Toolkit (переопределить под свою систему при GPU=cuda)
@@ -143,6 +150,15 @@ else
 	$(WIN_MKDIR_BIN)
 endif
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/dmsh
+
+.PHONY: build-stub-repro
+build-stub-repro: ## воспроизводимая stub-сборка (без CGO, trimpath, фиксированная дата)
+ifeq ($(IS_UNIX),1)
+	@mkdir -p bin
+else
+	$(WIN_MKDIR_BIN)
+endif
+	CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags "$(REPRO_LDFLAGS)" -o $(BIN) ./cmd/dmsh
 
 # Установка бинарника и man-страниц в префикс. Первый аргумент — префикс,
 # второй — команда повышения прав (пустая, если права есть или не нужны).
@@ -457,10 +473,11 @@ else
 endif
 
 .PHONY: sbom
-sbom: ## generate CycloneDX SBOM (requires cyclonedx-gomod)
-	@command -v cyclonedx-gomod >/dev/null 2>&1 || { echo "cyclonedx-gomod not found; install it to generate SBOM"; exit 1; }
-	cyclonedx-gomod mod -json -output bin/dmsh.sbom.json
+sbom: ## generate reproducible CycloneDX SBOM (requires cyclonedx-gomod)
+	@command -v $(CYCLONEDX_GOMOD) >/dev/null 2>&1 || { echo "$(CYCLONEDX_GOMOD) not found; install it to generate SBOM"; exit 1; }
+	@mkdir -p $(dir $(SBOM_OUT))
+	$(CYCLONEDX_GOMOD) mod -json -licenses -notimestamp -noserial -output $(SBOM_OUT)
 
 .PHONY: release-artifacts
-release-artifacts: checksums ## prepare release artifacts (checksums; run sbom separately if available)
-	@echo "Release artifacts prepared in bin/ (optional: make sbom)"
+release-artifacts: checksums sbom ## prepare release artifacts (SHA256SUMS + CycloneDX SBOM)
+	@echo "Release artifacts prepared in bin/"

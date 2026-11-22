@@ -340,9 +340,11 @@ jobs:
       - name: Move binary to expected name
         run: mv bin/dmsh bin/dmsh-linux-amd64
 
-      - name: Build FreeBSD (stub) binary
+      - name: Build FreeBSD (stub) binary reproducibly
         run: |
-          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o bin/dmsh-freebsd-amd64 ./cmd/dmsh
+          VERSION="${GITHUB_REF_NAME#v}"
+          GOOS=freebsd GOARCH=amd64 make build-stub-repro VERSION="$VERSION"
+          mv bin/dmsh bin/dmsh-freebsd-amd64
 
       - name: Generate man pages
         run: go run ./cmd/genman
@@ -468,6 +470,54 @@ jobs:
           done
           cp release/dmsh-packages/* dist/ 2>/dev/null || true
           ls -la dist/
+
+      # Release gate. These steps run before the release is created and fail
+      # the job when the checksums, the SBOM or the signing key are missing.
+      # A draft release is still a release: it must carry all three.
+      - name: Install SBOM tool
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
+
+      - name: Generate SBOM
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          make sbom SBOM_OUT="dist/dmsh-${VERSION}.sbom.json"
+
+      - name: Generate and verify SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          count=$(find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no release artifacts found in dist/"
+            exit 1
+          fi
+          find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          sha256sum --check --status SHA256SUMS
+          echo "SHA256SUMS covers $count files"
+          cat SHA256SUMS
+
+      - name: Import release signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "::error::RELEASE_GPG_PRIVATE_KEY is not configured; refusing to publish an unsigned release."
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/dmsh-gpg"
+          mkdir -m 700 -p "$GNUPGHOME"
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Sign and verify SHA256SUMS
+        env:
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/dmsh-gpg"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+            --armor --detach-sign --output dist/SHA256SUMS.asc dist/SHA256SUMS
+          gpg --verify dist/SHA256SUMS.asc dist/SHA256SUMS
 
       # Curated notes live next to the code: doc/releases/<tag>.md. Without a
       # matching file the release falls back to GitHub's generated notes.
