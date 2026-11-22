@@ -1532,11 +1532,29 @@ func TestBackgroundOutputIsVisibleWhileRunning(t *testing.T) {
 		Risk:    prompt.RiskLow,
 	})
 
-	// Первое сообщение — кусок вывода, а не итог.
-	first := cmd()
+	// Первый кусок вывода должен прийти до завершения команды. Секундный
+	// тик может обогнать его: на Windows старт PowerShell занимает больше
+	// секунды. Тик не теряем — он продолжает вычитывать очередь.
+	var first tea.Msg
+	for {
+		first = cmd()
+		if first == nil {
+			t.Fatal("the command closed before producing live output")
+		}
+		tick, ok := first.(cmdTickMsg)
+		if !ok {
+			break
+		}
+		mm, next := got.Update(tick)
+		got = mm.(tuiModel)
+		if next == nil {
+			t.Fatal("a tick must keep the output queue pumped")
+		}
+		cmd = next
+	}
 	out, ok := first.(cmdOutMsg)
 	if !ok {
-		t.Fatalf("first message = %#v, want a live output chunk", first)
+		t.Fatalf("first output message = %#v, want a live output chunk", first)
 	}
 	mm, pump := got.Update(out)
 	got = mm.(tuiModel)
