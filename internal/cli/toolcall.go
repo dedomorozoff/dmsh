@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -155,9 +156,11 @@ func (s *session) runToolCall(ctx context.Context, call llm.ToolCall, out io.Wri
 		return s.runAskTool(call, out)
 	case tools.NameWebSearch:
 		return s.runWebSearchTool(ctx, call)
-	default:
-		return s.tools.Call(ctx, call.Name, call.Arguments)
 	}
+	if strings.HasPrefix(call.Name, "plugin_") {
+		return s.runPluginTool(ctx, call, out)
+	}
+	return s.tools.Call(ctx, call.Name, call.Arguments)
 }
 
 // runAskTool задаёт пользователю один вопрос и ждёт ответа. В TUI ввода
@@ -303,7 +306,11 @@ func (s *session) searchModel() string {
 // модель не должна даже видеть такую возможность.
 func (s *session) toolSpecs() []llm.ToolSpec {
 	if s.cfg.Mode == config.ModeHelp {
-		return s.tools.SpecsWithout(tools.NameRunCommand)
+		skip := []string{tools.NameRunCommand}
+		for name := range s.plugins {
+			skip = append(skip, name)
+		}
+		return s.tools.SpecsWithout(skip...)
 	}
 	return s.tools.Specs()
 }
@@ -336,8 +343,17 @@ func (s *session) promptToolNames() []string {
 	return names
 }
 
+// discoveredPlugins ищет разрешённые в конфиге dmsh-* утилиты в PATH.
+func discoveredPlugins(allowlist []string) map[string]tools.Plugin {
+	out := make(map[string]tools.Plugin)
+	for _, p := range tools.DiscoverPlugins(os.Getenv("PATH"), allowlist) {
+		out[tools.PluginToolName(p.Name)] = p
+	}
+	return out
+}
+
 // registerOptionalTools добавляет инструменты, которым нужен доступ к
-// сессии: вопрос пользователю и веб-поиск. Вызывается один раз при старте.
+// сессии: вопрос пользователю, веб-поиск и плагины из PATH. Вызывается один раз при старте.
 func (s *session) registerOptionalTools() {
 	s.tools.Register(tools.AskSpec(), func(context.Context, string) (string, error) {
 		return "", errors.New("ask must be answered by the user")
@@ -346,6 +362,12 @@ func (s *session) registerOptionalTools() {
 		return "", errors.New("websearch must go through the provider search model")
 	})
 	s.tools.Register(tools.TodoSpec(), tools.NewTodoRunner(s.todos))
+	for name := range s.plugins {
+		pluginName := strings.TrimPrefix(name, "plugin_")
+		s.tools.Register(tools.PluginSpec(pluginName), func(context.Context, string) (string, error) {
+			return "", errors.New("plugins must run through the policy gate")
+		})
+	}
 }
 
 // runCommandTool исполняет команду, запрошенную моделью через
@@ -400,6 +422,74 @@ func (s *session) runCommandTool(ctx context.Context, call llm.ToolCall, out io.
 	s.addRecentAndHistory(command, "tool")
 	s.audit(command, "tool", dec, res)
 
+	content := res.Stdout
+	if res.Stderr != "" {
+		content += "\n[stderr]\n" + res.Stderr
+	}
+	if content == "" && res.Err != nil {
+		content = res.Err.Error()
+	}
+	return tools.EncodeResult(tools.Result{
+		OK:       res.ExitCode == 0 && res.Err == nil,
+		Content:  content,
+		ExitCode: res.ExitCode,
+	})
+}
+
+// runPluginTool runs an allowlisted dmsh-* helper. It goes through the same
+// gates as run_command: mode/dry-run, policy, confirmation, audit. Arguments
+// are passed as argv to exec, never through a shell.
+func (s *session) runPluginTool(ctx context.Context, call llm.ToolCall, out io.Writer) string {
+	plugin, ok := s.plugins[call.Name]
+	if !ok {
+		return tools.EncodeResult(tools.Result{OK: false, Error: "plugin is not allowlisted: " + call.Name})
+	}
+	var args tools.PluginArgs
+	if err := call.DecodeArgs(&args); err != nil {
+		return tools.EncodeResult(tools.Result{OK: false, Error: "invalid arguments: " + err.Error()})
+	}
+	argv, err := tools.SplitArgs(args.Args)
+	if err != nil {
+		return tools.EncodeResult(tools.Result{OK: false, Error: err.Error()})
+	}
+	if err := s.runCommandAllowed(); err != nil {
+		return tools.EncodeResult(tools.Result{OK: false, Error: err.Error()})
+	}
+
+	display := tools.PluginPrefix + plugin.Name
+	if len(argv) > 0 {
+		display += " " + args.Args
+	}
+	dec := policy.Evaluate(display, prompt.RiskMedium, s.cfg.DangerPatterns, s.cfg.SuspiciousPatterns)
+	if dec.Allowed && allowlisted(display, s.cfg.Allowlist) {
+		dec.Risk = prompt.RiskLow
+	}
+	if !dec.Allowed {
+		s.audit(display, "tool", dec, executor.Result{})
+		return tools.EncodeResult(tools.Result{
+			OK:    false,
+			Error: "blocked by security policy: " + dec.Reason,
+		})
+	}
+	if dec.Risk != prompt.RiskLow && !s.autoYes {
+		if s.input == nil {
+			return tools.EncodeResult(tools.Result{
+				OK:    false,
+				Error: "plugin confirmation is required, but dmsh is running interactively: return this call in your JSON answer instead",
+			})
+		}
+		ok, cerr := s.confirmOK(out, "run plugin "+display+"?")
+		if cerr != nil {
+			return tools.EncodeResult(tools.Result{OK: false, Error: cerr.Error()})
+		}
+		if !ok {
+			return tools.EncodeResult(tools.Result{OK: false, Error: "user declined to run the plugin"})
+		}
+	}
+
+	res := executor.RunBinary(ctx, plugin.Path, argv...)
+	s.addRecentAndHistory(display, "tool")
+	s.audit(display, "tool", dec, res)
 	content := res.Stdout
 	if res.Stderr != "" {
 		content += "\n[stderr]\n" + res.Stderr

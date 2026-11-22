@@ -68,6 +68,7 @@ type session struct {
 	engine   llm.Engine
 	tools    *tools.Registry
 	todos    *tools.TodoStore
+	plugins  map[string]tools.Plugin // tool name -> allowlisted executable
 	// searchEngine обслуживает инструмент websearch. Он создаётся лениво и
 	// использует отдельную search-модель того же провайдера.
 	searchEngine llm.Engine
@@ -220,6 +221,7 @@ func newSession(cfg config.Config) (*session, error) {
 		notice:   notice,
 		tools:    newToolRegistry(cfg.Shell),
 		todos:    tools.NewTodoStore(),
+		plugins:  discoveredPlugins(cfg.PluginAllowlist),
 		stats:    SessionStats{StartTime: time.Now()},
 	}
 

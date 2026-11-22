@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -22,6 +23,23 @@ func slowEcho(first, second string) string {
 		return "echo " + first + "; Start-Sleep -Milliseconds 700; echo " + second
 	}
 	return "echo " + first + "; sleep 1; echo " + second
+}
+
+func TestRunBinaryPassesArgsDirectly(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+	res := RunBinary(context.Background(), goBin, "version")
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("RunBinary = %+v", res)
+	}
+	if !strings.HasPrefix(res.Stdout, "go version") {
+		t.Fatalf("stdout = %q", res.Stdout)
+	}
+	if empty := RunBinary(context.Background(), "", "version"); empty.ExitCode != -1 {
+		t.Fatalf("empty path must fail, got %+v", empty)
+	}
 }
 
 // Главное свойство RunStream: кусок вывода приходит, пока процесс ещё

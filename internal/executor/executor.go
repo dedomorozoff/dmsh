@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -107,6 +108,25 @@ func RunStream(ctx context.Context, shell, command string, onOut func(text strin
 		}))
 	}
 
+	err := cmd.Run()
+	return Result{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Err:      err,
+		ExitCode: exitCode(cmd, err),
+	}
+}
+
+// RunBinary executes a program directly, without a shell. Plugin arguments
+// are passed as argv entries, so shell metacharacters have no meaning here.
+func RunBinary(ctx context.Context, path string, args ...string) Result {
+	if strings.TrimSpace(path) == "" {
+		return Result{ExitCode: -1, Err: errEmpty}
+	}
+	cmd := exec.CommandContext(ctx, filepath.Clean(path), args...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	err := cmd.Run()
 	return Result{
 		Stdout:   stdout.String(),

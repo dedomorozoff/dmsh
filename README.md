@@ -285,6 +285,16 @@ Notes:
   mode. In the TUI there is no way to block mid-task, so the model is told to
   use `intent=ask_clarification` instead. When stdin is piped into dmsh it is
   already spent on the prompt, so `ask` is not offered at all.
+
+### Plugins
+
+External `dmsh-*` executables in `PATH` can be exposed as model tools. List
+their names in the config (`plugin_allowlist: ["git"]`); an empty list means the
+feature is off. An allowlisted `dmsh-git` becomes the tool `plugin_git`, with a
+single string of arguments. Arguments are split into argv and passed directly
+to the executable — no shell is involved. Every call still goes through the
+same policy check, confirmation and audit log as `run_command`; in dry-run or
+help mode no plugin is advertised or executed.
 - `websearch` issues a second request to the same endpoint with a search
   model (`gemini-search` by default, `--search-model` to change). It is only
   available for the `pollinations` provider — that model is hosted there.

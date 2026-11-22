@@ -99,25 +99,28 @@ type Config struct {
 	// RemoteAPIKey — ключ удалённого провайдера (Pollinations требует его
 	// для генерации). Пусто: запрос уходит без заголовка и сервер сам
 	// объяснит, что ключ нужен. Переменная окружения важнее файла.
-	RemoteAPIKey       string            `json:"remote_api_key,omitempty"`
-	SearchModel        string            `json:"search_model,omitempty"`
-	ToolsEnabled       bool              `json:"tools_enabled"`
-	Threads            int               `json:"threads"`
-	CtxSize            int               `json:"ctx_size"`
-	GPULayers          int               `json:"gpu_layers"`
-	MaxTokens          int               `json:"max_tokens"`
-	Temperature        float32           `json:"temperature"`
-	TopP               float32           `json:"top_p"`
-	Shell              string            `json:"shell"`
-	HistoryFile        string            `json:"history_file"`
-	AuditFile          string            `json:"audit_file"`
-	DryRun             bool              `json:"dry_run"`
-	Mode               Mode              `json:"mode"`
-	ResumeSession      bool              `json:"resume_session"`
-	DangerPatterns     []string          `json:"danger_patterns,omitempty"`
-	SuspiciousPatterns []string          `json:"suspicious_patterns,omitempty"`
-	Allowlist          []string          `json:"allowlist,omitempty"`
-	Aliases            map[string]string `json:"aliases,omitempty"`
+	RemoteAPIKey       string   `json:"remote_api_key,omitempty"`
+	SearchModel        string   `json:"search_model,omitempty"`
+	ToolsEnabled       bool     `json:"tools_enabled"`
+	Threads            int      `json:"threads"`
+	CtxSize            int      `json:"ctx_size"`
+	GPULayers          int      `json:"gpu_layers"`
+	MaxTokens          int      `json:"max_tokens"`
+	Temperature        float32  `json:"temperature"`
+	TopP               float32  `json:"top_p"`
+	Shell              string   `json:"shell"`
+	HistoryFile        string   `json:"history_file"`
+	AuditFile          string   `json:"audit_file"`
+	DryRun             bool     `json:"dry_run"`
+	Mode               Mode     `json:"mode"`
+	ResumeSession      bool     `json:"resume_session"`
+	DangerPatterns     []string `json:"danger_patterns,omitempty"`
+	SuspiciousPatterns []string `json:"suspicious_patterns,omitempty"`
+	Allowlist          []string `json:"allowlist,omitempty"`
+	// PluginAllowlist — имена внешних dmsh-* утилит из PATH, которые можно
+	// показывать модели как инструменты. Пусто — плагины выключены.
+	PluginAllowlist []string          `json:"plugin_allowlist,omitempty"`
+	Aliases         map[string]string `json:"aliases,omitempty"`
 
 	// Mouse — мышь в TUI: клик по папке в статусной строке открывает выбор
 	// каталога. Выключается, когда нужно штатное выделение текста в
