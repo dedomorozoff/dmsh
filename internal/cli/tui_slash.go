@@ -16,7 +16,7 @@ import (
 // Mode switches come first so they are visible in the truncated menu.
 var slashCommands = []string{
 	"/mode", "/shell", "/help", "/clear", "/exit", "/quit",
-	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/plan", "/stats", "/bind", "/alias", "/export", "/retry", "/search", "/copy",
+	"/history", "/cd", "/pwd", "/model", "/models", "/setup", "/settings", "/proxy", "/mouse", "/todo", "/plan", "/doc", "/stats", "/bind", "/alias", "/export", "/retry", "/search", "/copy",
 }
 
 // slashDesc — one-line descriptions for the "/" menu.
@@ -32,6 +32,7 @@ var slashDesc = map[string]string{
 	"/mouse":    "toggle mouse UI / native text selection and copy",
 	"/todo":     "the model's task list: click a task to mark it done",
 	"/plan":     "plan: /plan <request>, review in /todo, then /plan run",
+	"/doc":      "search project documentation (README, docs) with file:line refs",
 	"/stats":    "session statistics",
 	"/search":   "search the output (Ctrl+F), F3 for the next match",
 	"/copy":     "copy the last block of output to the clipboard",
@@ -158,6 +159,29 @@ func (m tuiModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			}
 			return planReadyMsg{steps: parsePlanSteps(resp.Explanation)}
 		}
+	case strings.HasPrefix(line, "/doc "):
+		query := strings.TrimSpace(strings.TrimPrefix(line, "/doc "))
+		if query == "" {
+			m.addLine(fmt.Sprintf("%susage: /doc <query>%s", colorYellow, colorReset))
+			return m, nil
+		}
+		st, _, err := openDocStore(".")
+		if err != nil {
+			m.addLine(fmt.Sprintf("%sdocs: %v%s", colorRed, err, colorReset))
+			return m, nil
+		}
+		hits, err := st.Search(query, 5)
+		_ = st.Close()
+		if err != nil {
+			m.addLine(fmt.Sprintf("%sdocs: %v%s", colorRed, err, colorReset))
+			return m, nil
+		}
+		if len(hits) == 0 {
+			m.addLine(fmt.Sprintf("%sNo documentation matches.%s", colorGray, colorReset))
+			return m, nil
+		}
+		m.addLine(formatDocHits(hits))
+		return m, nil
 	case line == "/todo", line == "todo":
 		return m.openTodoMenu(), nil
 	case strings.HasPrefix(line, "/todo "):
@@ -230,6 +254,7 @@ func (m *tuiModel) showHelp() {
 	m.addLine(fmt.Sprintf("  %s/cd%s path     — change directory", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/todo%s        — the model's task list; click a task to toggle it", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/plan%s        — /plan <request>, review in /todo, /plan run to execute", colorYellow, colorReset))
+	m.addLine(fmt.Sprintf("  %s/doc%s         — search project docs with file:line references", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/pwd%s         — current directory", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/history%s     — recent commands", colorYellow, colorReset))
 	m.addLine(fmt.Sprintf("  %s/stats%s       — session statistics", colorYellow, colorReset))

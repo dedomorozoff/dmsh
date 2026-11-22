@@ -411,6 +411,14 @@ model asked"). `y` runs, `Enter` / `Esc` / `n` cancel, and the `[ run ]` /
 | `dmsh config show/set` | view and edit configuration (incl. custom `danger_patterns` / `suspicious_patterns`) |
 | `dmsh history` | command history |
 | `dmsh audit` | audit log of executed commands (add `--json` for raw lines) |
+| `dmsh doc <query>` | search project docs and print `file:line` references (`--dir`, `--limit`, `--json`) |
+| `dmsh plan <request>` | build a reviewed checklist and run its steps (`--run`) |
+
+`dmsh doc` indexes the Markdown guides in the current directory into a SQLite
+file under the dmsh config directory and ranks chunks lexically; each result
+includes the exact `file:line`. The TUI offers the same search as `/doc <query>`.
+Embedding-based ranking is not wired in yet because the local llama engine does
+not expose an embedding API.
 
 Common flags (all subcommands): `--model`, `--provider`, `--remote-model`,
 `--remote-base-url`, `--no-tools`, `--proxy-mode`, `--proxy`,
