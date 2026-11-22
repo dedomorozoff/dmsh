@@ -20,7 +20,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - `dmsh session rename <old> <new>` for named sessions (including the default one), with overwrite protection.
 
 ### Changed
-- TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`).
+- TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`); no source or test file is now over 600 lines.
 - Doctor diagnostics enriched with hints and redacted sensitive details while preserving JSON check output.
 - CLI/provider error hints improved for missing model/build, proxy issues, auth failures, Ollama availability, and network errors.
 

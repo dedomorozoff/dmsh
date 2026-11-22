@@ -78,11 +78,17 @@
 дата). Гейт защищён тестом `TestReleaseWorkflowHasIntegrityGate`,
 команды проверены локально на одноразовом ключе.
 
-**KPI покрытия закрыты 2026-11-22:** `cli` 65.2 % (цель 65), `config` 78.8 %
+**KPI покрытия закрыты 2026-11-22:** `cli` 65.1 % (цель 65), `config` 78.8 %
 (цель 70), `model` 72.0 % (цель 60), `feedback` 98 %. Тесты hardware-детекта
 используют подмену `executeCommand`, загрузки — локальный `httptest`-сервер.
 Попутно найден и исправлен баг `deleteWordBack`: Ctrl+W / Alt+Backspace
 пересобирал тот же срез и ничего не удалял.
+
+**KPI «нет файлов > 600 строк» закрыт 2026-11-22:** `repl.go`, `modelmenu.go`,
+`settings.go` и `config.go` разбиты по ответственности (`repl_view.go`,
+`repl_actions.go`, `modelmenu_actions.go`, `settings_edit.go`, `hardware.go`),
+крупные тесты — на `tui_*_test.go` и `toolcall_tools_test.go`. Поведение не
+менялось: разделение проверено полным прогоном тестов.
 
 **Решения:** `dry_run=true` по умолчанию (`--dry-run=false` для явного
 выполнения). Каталог `лопл/` удалён пользователем. Shell completion уже
