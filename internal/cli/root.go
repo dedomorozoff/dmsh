@@ -12,6 +12,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func init() {
+	// Cobra's "mousetrap" only makes sense for GUI-subsystem binaries that
+	// have no console. dmsh is always built as a console app, so launching it
+	// from Explorer already gives it a terminal — suppress the splash text.
+	cobra.MousetrapHelpText = ""
+}
+
 // rootFlags holds common flags shared across subcommands.
 type rootFlags struct {
 	cfg         config.Config
