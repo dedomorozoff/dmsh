@@ -130,7 +130,7 @@ func (m tuiModel) wrappedContent() []string {
 	if m.content == "" {
 		return nil
 	}
-	complete, tail := m.content, ""
+	var complete, tail string
 	if i := strings.LastIndexByte(m.content, '\n'); i >= 0 {
 		complete, tail = m.content[:i+1], m.content[i+1:]
 	} else {

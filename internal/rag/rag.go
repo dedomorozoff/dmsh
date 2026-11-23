@@ -159,7 +159,7 @@ var stopWords = map[string]bool{
 func terms(s string) []string {
 	var out []string
 	for _, word := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r >= 'а' && r <= 'я')
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && (r < 'а' || r > 'я')
 	}) {
 		if len(word) < 2 || stopWords[word] {
 			continue

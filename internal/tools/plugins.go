@@ -113,10 +113,10 @@ func SplitArgs(raw string) ([]string, error) {
 		}
 		switch {
 		case quote != 0:
-			switch {
-			case r == quote:
+			switch r {
+			case quote:
 				quote = 0
-			case r == '\\':
+			case '\\':
 				escaped = true
 			default:
 				cur.WriteRune(r)
