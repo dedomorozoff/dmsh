@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,12 +41,13 @@ func TestMigrateRejectsFutureVersion(t *testing.T) {
 
 func TestLoadMigratesLegacyProxyURL(t *testing.T) {
 	dir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		t.Setenv("APPDATA", dir)
-	} else {
-		t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("AppData", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	path, err := userConfigPath()
+	if err != nil {
+		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "dmsh", "config.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -283,16 +282,18 @@ func TestHistoryAuditAndDoctorOutput(t *testing.T) {
 
 func TestListNamedSessionsAndSearchPrompt(t *testing.T) {
 	dir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		t.Setenv("APPDATA", dir)
-	} else {
-		t.Setenv("XDG_CONFIG_HOME", dir)
-	}
+	t.Setenv("AppData", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
 	names, err := listNamedSessions()
 	if err != nil || len(names) != 0 {
 		t.Fatalf("empty sessions = %v, %v", names, err)
 	}
-	sdir := filepath.Join(dir, "dmsh", "sessions")
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdir := filepath.Join(base, "dmsh", "sessions")
 	if err := os.MkdirAll(sdir, 0o700); err != nil {
 		t.Fatal(err)
 	}

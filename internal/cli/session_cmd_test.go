@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -11,12 +10,14 @@ import (
 func setupSessionDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		t.Setenv("APPDATA", dir)
-	} else {
-		t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("AppData", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "dmsh", "sessions"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(base, "dmsh", "sessions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return dir

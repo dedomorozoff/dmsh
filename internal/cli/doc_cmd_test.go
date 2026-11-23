@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -13,11 +12,9 @@ import (
 
 func TestDocCommandOutputsReferences(t *testing.T) {
 	dir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		t.Setenv("APPDATA", dir)
-	} else {
-		t.Setenv("XDG_CONFIG_HOME", dir)
-	}
+	t.Setenv("AppData", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# dmsh\n\nProxy settings are here.\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -38,11 +35,9 @@ func TestDocCommandOutputsReferences(t *testing.T) {
 
 func TestDocStoreSearchAndFormatting(t *testing.T) {
 	dir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		t.Setenv("APPDATA", dir)
-	} else {
-		t.Setenv("XDG_CONFIG_HOME", dir)
-	}
+	t.Setenv("AppData", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
 	root := t.TempDir()
 	guide := filepath.Join(root, "README.md")
 	if err := os.WriteFile(guide, []byte("# dmsh\n\nProxy settings live in the config file.\n"), 0o600); err != nil {

@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"runtime"
 	"testing"
 )
 
@@ -36,11 +35,9 @@ func TestDryRunConfigMerge(t *testing.T) {
 
 func TestConfigExists(t *testing.T) {
 	dir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		t.Setenv("APPDATA", dir)
-	} else {
-		t.Setenv("XDG_CONFIG_HOME", dir)
-	}
+	t.Setenv("AppData", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
 	if ConfigExists() {
 		t.Fatal("a fresh config dir must report no config")
 	}
