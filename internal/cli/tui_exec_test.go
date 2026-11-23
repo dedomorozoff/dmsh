@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,18 +20,30 @@ import (
 )
 
 type captureEngine struct {
+	mu           sync.Mutex
 	tokens       []string
 	gen          string
 	system, user string
 }
 
+// captured is safe to call while streams are still running in other tests.
+func (e *captureEngine) captured() (string, string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.system, e.user
+}
+
 func (e *captureEngine) Generate(_ context.Context, system, user string, _ llm.SamplingOptions) (string, error) {
+	e.mu.Lock()
 	e.system, e.user = system, user
+	e.mu.Unlock()
 	return e.gen, nil
 }
 
 func (e *captureEngine) Stream(_ context.Context, system, user string, _ llm.SamplingOptions, tokens chan<- string) error {
+	e.mu.Lock()
 	e.system, e.user = system, user
+	e.mu.Unlock()
 	for _, t := range e.tokens {
 		tokens <- t
 	}

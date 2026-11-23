@@ -84,6 +84,11 @@
 Попутно найден и исправлен баг `deleteWordBack`: Ctrl+W / Alt+Backspace
 пересобирал тот же срез и ничего не удалял.
 
+**`-race` зелёный по всему дереву (проверено 2026-11-23):** гонка была в
+тестовой заглушке `captureEngine` (параллельные стримы писали `system/user`
+без блокировки); добавлен `sync.Mutex` и безопасный метод `captured()`.
+Продуктовых гонок не найдено.
+
 **KPI «нет файлов > 600 строк» закрыт 2026-11-22:** `repl.go`, `modelmenu.go`,
 `settings.go` и `config.go` разбиты по ответственности (`repl_view.go`,
 `repl_actions.go`, `modelmenu_actions.go`, `settings_edit.go`, `hardware.go`),

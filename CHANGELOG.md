@@ -21,6 +21,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Feedback hints are now English, matching the rest of the interface; Russian stderr is still recognized as input.
 - Local documentation search: `dmsh doc <query>` and TUI `/doc` index Markdown guides into SQLite and return chunks with `file:line` references.
 - Plugin support: allowlisted `dmsh-*` executables in `PATH` appear as `plugin_*` tools, with argv-only execution and the same policy/confirmation/audit gates as `run_command`.
+- Restored the documented `dmsh repl` command; it now starts the TUI instead of being parsed as a one-shot query.
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`); no source or test file is now over 600 lines.

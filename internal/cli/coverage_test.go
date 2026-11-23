@@ -127,6 +127,18 @@ func TestLineReaderAndFlags(t *testing.T) {
 	}
 }
 
+// `dmsh repl` is documented; without a real subcommand the word would be
+// swallowed by ArbitraryArgs and sent to the model as a one-shot query.
+func TestReplCommandExists(t *testing.T) {
+	root := NewRootCmdWithConfig(config.Default())
+	for _, c := range root.Commands() {
+		if c.Name() == "repl" {
+			return
+		}
+	}
+	t.Fatal("the documented `dmsh repl` command is missing")
+}
+
 func TestSmallPureHelpers(t *testing.T) {
 	if got := splitCSV(" a, b ,, c "); len(got) != 3 || got[0] != "a" || got[2] != "c" {
 		t.Fatalf("splitCSV = %v", got)

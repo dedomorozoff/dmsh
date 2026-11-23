@@ -206,6 +206,16 @@ func NewRootCmdWithConfig(cfg config.Config, firstRun ...bool) *cobra.Command {
 
 	cmd.AddCommand(newAskCmd(rf))
 	cmd.AddCommand(newRunCmd(rf))
+	// `dmsh repl` is kept for compatibility and for discoverability: without
+	// it the word would be treated as a one-shot query by ArbitraryArgs.
+	cmd.AddCommand(&cobra.Command{
+		Use:   "repl",
+		Short: "Start the interactive TUI (same as dmsh with no arguments)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runInteractive(cmd, rf)
+		},
+	})
 	cmd.AddCommand(newPlanCmd(rf))
 	cmd.AddCommand(newDocCmd(rf))
 	cmd.AddCommand(newVersionCmd())

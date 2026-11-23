@@ -41,7 +41,8 @@ func TestAskStreamUsesExpandedAlias(t *testing.T) {
 	if _, _, err := s.askStream(context.Background(), "ask", "gs", &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(eng.user, "show all txt files") {
-		t.Fatalf("the prompt must contain the expanded alias:\n%s", eng.user)
+	_, user := eng.captured()
+	if !strings.Contains(user, "show all txt files") {
+		t.Fatalf("the prompt must contain the expanded alias:\n%s", user)
 	}
 }
