@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/dedomorozoff/dmsh/internal/vt"
 	"github.com/dedomorozoff/dmsh/internal/config"
+	"github.com/dedomorozoff/dmsh/internal/vt"
 )
 
 func (m tuiModel) View() tea.View {
@@ -508,4 +508,3 @@ type bodyWrapCache struct {
 	// пересборки: старые строки содержат старые маркеры.
 	highlight string
 }
-

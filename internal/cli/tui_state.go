@@ -58,5 +58,3 @@ func (m tuiModel) rowOfLine(line int) int {
 	}
 	return row
 }
-
-

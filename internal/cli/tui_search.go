@@ -269,4 +269,3 @@ func (m tuiModel) handleFindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-

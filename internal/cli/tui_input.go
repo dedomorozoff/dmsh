@@ -489,4 +489,3 @@ func (m tuiModel) handleHistoryNext() (tea.Model, tea.Cmd) {
 	m.cursorPos = runeSliceLen(m.input)
 	return m, nil
 }
-

@@ -223,4 +223,3 @@ func TestRunBadFlagJSON(t *testing.T) {
 		t.Fatalf("kind=%q, want usage: %#v", kind, m)
 	}
 }
-

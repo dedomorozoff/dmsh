@@ -396,5 +396,3 @@ func mustConfigPath() string {
 func errorsIsNotExist(err error) bool {
 	return err != nil && os.IsNotExist(err)
 }
-
-

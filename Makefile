@@ -287,6 +287,10 @@ vet: ## Проверить код go vet
 fmt: ## Отформатировать код
 	$(GO) fmt ./...
 
+.PHONY: fmt-check
+fmt-check: ## Fail when any Go file is not gofmt-clean
+	$(GO) run ./cmd/fmtcheck
+
 .PHONY: smoke
 smoke: ## Проверить, что собранное дерево запускается (dmsh version)
 	$(GO) run ./cmd/dmsh version
