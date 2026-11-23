@@ -84,6 +84,11 @@
 Попутно найден и исправлен баг `deleteWordBack`: Ctrl+W / Alt+Backspace
 пересобирал тот же срез и ничего не удалял.
 
+**Релизные цели локально проверены 2026-11-23:** `make release-artifacts`
+выдает `bin/SHA256SUMS` (совпадает с `Get-FileHash`) и `bin/dmsh.sbom.json`;
+раньше Windows-ветка `checksums` падала из-за PowerShell-квотинга и отсутствия
+`Get-FileHash`, теперь обе платформы используют `go run ./cmd/genhashes`.
+
 **`-race` зелёный по всему дереву (проверено 2026-11-23):** гонка была в
 тестовой заглушке `captureEngine` (параллельные стримы писали `system/user`
 без блокировки); добавлен `sync.Mutex` и безопасный метод `captured()`.

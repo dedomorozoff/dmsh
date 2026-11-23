@@ -459,23 +459,19 @@ dist-all: dist-deb dist-rpm dist-linux-tar dist-macos dist-freebsd dist-windows 
 checksums: ## generate SHA256SUMS for artifacts in bin/
 ifeq ($(IS_UNIX),1)
 	@mkdir -p bin
-	@cd bin && { \
-		files=$$(ls dmsh* 2>/dev/null || true); \
-		if [ -z "$$files" ]; then echo "No artifacts found in bin/"; exit 1; fi; \
-		if command -v sha256sum >/dev/null 2>&1; then sha256sum $$files > SHA256SUMS; \
-		elif command -v shasum >/dev/null 2>&1; then shasum -a 256 $$files > SHA256SUMS; \
-		else echo "sha256sum/shasum not found"; exit 1; fi; \
-		cat SHA256SUMS; \
-	}
 else
 	$(WIN_MKDIR_BIN)
-	powershell -Command "$$files = Get-ChildItem bin -File -Filter 'dmsh*' -ErrorAction SilentlyContinue | Where-Object { $$_.Name -ne 'SHA256SUMS' }; if (-not $$files) { Write-Error 'No artifacts found in bin/'; exit 1 }; $$lines = $$files | ForEach-Object { ((Get-FileHash $$_.FullName -Algorithm SHA256).Hash.ToLower()) + '  ' + $$_.Name }; $$lines | Set-Content -Encoding ascii bin/SHA256SUMS; Get-Content bin/SHA256SUMS"
 endif
+	$(GO) run ./cmd/genhashes -dir bin
 
 .PHONY: sbom
 sbom: ## generate reproducible CycloneDX SBOM (requires cyclonedx-gomod)
+ifeq ($(IS_UNIX),1)
 	@command -v $(CYCLONEDX_GOMOD) >/dev/null 2>&1 || { echo "$(CYCLONEDX_GOMOD) not found; install it to generate SBOM"; exit 1; }
 	@mkdir -p $(dir $(SBOM_OUT))
+else
+	@powershell -NoProfile -Command "if (-not (Get-Command '$(CYCLONEDX_GOMOD)' -ErrorAction SilentlyContinue)) { Write-Error '$(CYCLONEDX_GOMOD) not found; install it to generate SBOM'; exit 1 }; New-Item -ItemType Directory -Force -Path (Split-Path '$(SBOM_OUT)') | Out-Null"
+endif
 	$(CYCLONEDX_GOMOD) mod -json -licenses -notimestamp -noserial -output $(SBOM_OUT)
 
 .PHONY: release-artifacts

@@ -22,6 +22,7 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Local documentation search: `dmsh doc <query>` and TUI `/doc` index Markdown guides into SQLite and return chunks with `file:line` references.
 - Plugin support: allowlisted `dmsh-*` executables in `PATH` appear as `plugin_*` tools, with argv-only execution and the same policy/confirmation/audit gates as `run_command`.
 - Restored the documented `dmsh repl` command; it now starts the TUI instead of being parsed as a one-shot query.
+- `make checksums` / `make release-artifacts` are now cross-platform via `cmd/genhashes` (no dependence on `sha256sum` or a specific PowerShell version).
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`); no source or test file is now over 600 lines.
