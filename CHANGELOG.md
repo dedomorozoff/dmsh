@@ -7,6 +7,8 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-24
+
 ### Added
 - `--debug` / `--debug-file` options for redacted debug logging (request timings, provider/tool diagnostics).
 - Extended session statistics (`/stats`): request errors, tool steps, TTFT, request/stream timing and stream counters.
@@ -23,11 +25,13 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Plugin support: allowlisted `dmsh-*` executables in `PATH` appear as `plugin_*` tools, with argv-only execution and the same policy/confirmation/audit gates as `run_command`.
 - Restored the documented `dmsh repl` command; it now starts the TUI instead of being parsed as a one-shot query.
 - `make checksums` / `make release-artifacts` are now cross-platform via `cmd/genhashes` (no dependence on `sha256sum` or a specific PowerShell version).
+- `make fmt-check` target that fails when any Go file is not gofmt-clean.
 
 ### Changed
 - TUI and session internals refactored into smaller modules for maintainability (`tui_*`, `session_*`); no source or test file is now over 600 lines.
 - Doctor diagnostics enriched with hints and redacted sensitive details while preserving JSON check output.
 - CLI/provider error hints improved for missing model/build, proxy issues, auth failures, Ollama availability, and network errors.
+- Go sources normalized to LF line endings via `.gitattributes`; no CRLF churn in diffs on Windows.
 
 ### Fixed
 - Ctrl+W / Alt+Backspace now actually deletes the previous word in the TUI input; the old helper rebuilt the same slice.
@@ -36,6 +40,9 @@ and this project aims to follow [Conventional Commits](https://www.conventionalc
 - Redacted secrets in provider notices, setup/model screens and download output; URL credentials are masked at the endpoint source.
 - Prevented configured secrets and URL credentials from being persisted in history/audit entries.
 - Redacted credentials in proxy-related error messages and doctor details.
+- Cobra's Windows "mousetrap" splash text no longer appears when dmsh is launched by double-clicking the executable or from a shortcut.
+- Config and session tests now isolate `HOME` alongside `XDG_CONFIG_HOME`/`AppData`, so they pass on macOS where `os.UserConfigDir()` ignores `XDG_CONFIG_HOME`.
+- Staticcheck findings resolved: a dead store in the wrap cache, De Morgan rewrite in RAG term splitting, and a tagged switch in plugin argument splitting.
 
 ## [0.8.x] - recent work (summary)
 
