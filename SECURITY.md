@@ -41,4 +41,12 @@ sha256sum --check SHA256SUMS
 gpg --verify SHA256SUMS.asc SHA256SUMS
 ```
 
+The signing key is checked into the repository at
+`doc/releases/dmsh-release-signing-key.asc` (fingerprint
+`11DD0F0B86E656772FBC8A8F22CA72A8491AE508`). Import it once before verifying:
+
+```bash
+gpg --import doc/releases/dmsh-release-signing-key.asc
+```
+
 On macOS use `shasum -a 256 --check SHA256SUMS`. The release workflow fails if the checksums, the SBOM or the signature are missing, so an unsigned artifact must never appear in a release.
