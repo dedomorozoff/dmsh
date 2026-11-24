@@ -477,7 +477,10 @@ jobs:
       # the job when the checksums, the SBOM or the signing key are missing.
       # A draft release is still a release: it must carry all three.
       - name: Install SBOM tool
-        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
+          # This job has no setup-go, so GOPATH/bin is not on PATH by default.
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Generate SBOM
         run: |
